@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'app_log.dart';
 import 'image_cache.dart';
 import 'image_worker.dart';
 import 'cache_manager.dart';
@@ -48,8 +49,24 @@ class ChapterCacheManager {
   }) {
     final key = keyOf(source.id, bundle.chapterId);
     final existing = _tasks[key];
-    if (existing != null && existing.isActive) return existing;
+    if (existing != null && existing.isActive) {
+      existing.startPage = (startPage - 1).clamp(0, existing.total - 1);
+      return existing;
+    }
     if (existing != null && existing.status == CacheStatus.completed) {
+      existing.startPage = (startPage - 1).clamp(0, existing.total - 1);
+      if (!skipIfCached) {
+        final missing = <int>[];
+        for (var i = 0; i < existing.doneFlags.length; i++) {
+          if (!existing.doneFlags[i]) missing.add(i);
+        }
+        if (missing.isNotEmpty) {
+          existing.status = CacheStatus.running;
+          existing.startPage = (startPage - 1).clamp(0, existing.total - 1);
+          unawaited(_run(existing, concurrency));
+          return existing;
+        }
+      }
       return existing;
     }
 
@@ -64,17 +81,30 @@ class ChapterCacheManager {
     task.spill = bundle.length >= TempStore.spillPageCount;
     if (task.spill) task.tempDirReady = _prepareTemp(task);
     if (skipIfCached) {
-      task.status = CacheStatus.completed;
-      task.done = task.total;
-      task.readyCount = task.total;
-      for (var i = 0; i < task.doneFlags.length; i++) {
-        task.doneFlags[i] = true;
+      var allPresent = true;
+      for (var i = 0; i < bundle.pages.length; i++) {
+        final p = bundle.pages[i];
+        final u = p.directUrl ?? p.resolveUrl;
+        if (u == null || u.isEmpty) continue;
+        final onDisk = ImageCacheManager.instance.hasDisk(u);
+        final inTemp = task.tempDir != null &&
+            TempStore.instance.has(task.tempDir!, p.index);
+        if (onDisk || inTemp) {
+          task.doneFlags[i] = true;
+        } else {
+          allPresent = false;
+        }
       }
-      task.persistToDisk = persistToDisk;
-    task.startPage = (startPage - 1).clamp(0, task.total - 1);
-    _tasks[key] = task;
-      _notify();
-      return task;
+      if (allPresent) {
+        task.status = CacheStatus.completed;
+        task.done = task.total;
+        task.readyCount = task.total;
+        task.persistToDisk = persistToDisk;
+        task.startPage = (startPage - 1).clamp(0, task.total - 1);
+        _tasks[key] = task;
+        _notify();
+        return task;
+      }
     }
     _tasks[key] = task;
     unawaited(_run(task, concurrency));
@@ -119,26 +149,29 @@ class ChapterCacheManager {
 
     if (task.tempDirReady != null) await task.tempDirReady;
 
-    final order = <int>[];
-    {
-      final n = bundle.length;
-      final c = task.startPage.clamp(0, n - 1);
-      order.add(c);
-      for (var d = 1; d < n; d++) {
-        final hi = c + d;
-        final lo = c - d;
-        if (hi < n) order.add(hi);
-        if (lo >= 0) order.add(lo);
-        if (order.length >= n) break;
-      }
-    }
     var cursor = 0;
 
+    final pending = List<bool>.generate(bundle.length, (_) => true);
+
+    int nextIndex() {
+      final n = bundle.length;
+      final c = task.startPage.clamp(0, n - 1);
+      for (var d = 0; d < n; d++) {
+        final hi = c + d;
+        if (hi < n && pending[hi] && !task.doneFlags[hi]) return hi;
+        final lo = c - d;
+        if (lo >= 0 && pending[lo] && !task.doneFlags[lo]) return lo;
+      }
+      return -1;
+    }
     Future<void> worker() async {
       while (true) {
         if (task.status == CacheStatus.cancelled) return;
-        if (cursor >= order.length) return;
-        final i = order[cursor++];
+        if (cursor >= bundle.length) return;
+        final i = nextIndex();
+        if (i < 0) return;
+        pending[i] = false;
+        cursor++;
         if (task.doneFlags[i]) {
           task.done++;
           _notify();
@@ -152,7 +185,7 @@ class ChapterCacheManager {
             url = await task.source.resolvePageUrl(ref.resolveUrl!);
           }
           if (url != null && url.isNotEmpty) {
-            if (ImageCacheManager.instance.getUiSync(url) != null) {
+            if (ImageCacheManager.instance.hasDisk(url)) {
               task.doneFlags[i] = true;
               task.done++;
               _notify();
@@ -225,52 +258,43 @@ class ChapterCacheManager {
                 seg = ImageScrambler.segments(bundle.scrambleAid, pk);
               }
 
+              Uint8List? ready = data;
+              if (needScramble) {
+                ready = await ImageWorker.instance.unscrambleToJpeg(
+                  bytes: data,
+                  segments: seg,
+                  maxWidth: task.decodeWidth,
+                  quality: 88,
+                );
+              }
+
+              if (ready != null && ready.isNotEmpty) {
+                await ImageCacheManager.instance.persistBytes(
+                  url,
+                  ready,
+                  overwrite: true,
+                  ready: needScramble,
+                );
+              }
+
               if (task.shouldDecodePage(i)) {
-                Uint8List? jpg;
-                if (needScramble) {
-                  jpg = await ImageWorker.instance.unscrambleToJpeg(
-                    bytes: data,
-                    segments: seg,
-                    maxWidth: task.decodeWidth,
-                    quality: 90,
-                  );
-                }
                 final hasCache =
                     ImageCacheManager.instance.getUiSync(url) != null;
                 if (!hasCache) {
                   await Future<void>.delayed(Duration.zero);
                   final img = await ImageCacheManager.decodeScaled(
-                    jpg ?? data,
+                    ready ?? data,
                     targetWidth: task.decodeWidth,
                   );
                   if (img != null) ImageCacheManager.instance.putUi(url, img);
                 }
-                task.doneFlags[i] = true;
-              } else {
-                if (needScramble) {
-                  final jpg = await ImageWorker.instance.unscrambleToJpeg(
-                    bytes: data,
-                    segments: seg,
-                    maxWidth: task.decodeWidth,
-                  );
-                  if (jpg != null) data = jpg;
-                }
-                if (data.length > TempStore.maxSingleImageBytes) {
-                  task.tempDir ??= await TempStore.instance
-                      .dirFor(task.source.id, bundle.chapterId);
-                  await TempStore.instance.put(
-                    task.tempDir!,
-                    ref.index,
-                    data,
-                    sourceId: task.source.id,
-                    chapterId: bundle.chapterId,
-                  );
-                }
-                task.doneFlags[i] = true;
               }
+              task.doneFlags[i] = true;
             }
           }
-        } catch (_) {}
+        } catch (e) {
+          AppLog.instance.log('CACHE', 'page $i failed: $e');
+        }
         task.done++;
         task.readyCount = task.doneFlags.where((e) => e).length;
       if (!task.persistToDisk &&

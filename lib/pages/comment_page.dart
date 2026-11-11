@@ -39,6 +39,11 @@ class _CommentPageState extends State<CommentPage> {
 
   bool _loading = true;
   bool _sending = false;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+  int _emptyStreak = 0;
+  static const int _pageSize = 10;
+  static const int _maxPage = 200;
   int _page = 1;
   String? _error;
 
@@ -69,20 +74,64 @@ class _CommentPageState extends State<CommentPage> {
         _page = 1;
         _loading = true;
         _error = null;
+        _hasMore = true;
+        _loadingMore = false;
+        _emptyStreak = 0;
       });
+    } else {
+      if (_loadingMore || !_hasMore) return;
+      if (_page > _maxPage) {
+        setState(() => _hasMore = false);
+        return;
+      }
+      setState(() => _loadingMore = true);
     }
     try {
-      final list = await _service.fetchComments(aid: widget.aid, page: _page);
+      final (list, total) = await _service.fetchComments(
+        aid: widget.aid,
+        page: _page,
+      );
       if (!mounted) return;
       setState(() {
-        _comments.addAll(list);
-        _page++;
+        var added = 0;
+        for (final c in list) {
+          final cid = '${c['CID'] ?? c['cid'] ?? c['id'] ?? ''}';
+          if (cid.isEmpty) {
+            _comments.add(c);
+            added++;
+            continue;
+          }
+          final dup = _comments.any(
+            (e) => '${e['CID'] ?? e['cid'] ?? e['id'] ?? ''}' == cid,
+          );
+          if (dup) continue;
+          _comments.add(c);
+          added++;
+        }
+
+        if (added == 0) {
+          _emptyStreak++;
+        } else {
+          _emptyStreak = 0;
+          _page++;
+        }
+
+        if (total > 0) {
+          final totalPages = (total / _pageSize).ceil();
+          _hasMore = _page <= totalPages && _emptyStreak < 2;
+        } else {
+          _hasMore = _emptyStreak < 2 && list.isNotEmpty;
+        }
+        if (_page > _maxPage) _hasMore = false;
+
         _loading = false;
+        _loadingMore = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
+        _loadingMore = false;
         _error = '$e';
       });
     }
@@ -282,8 +331,7 @@ class _CommentPageState extends State<CommentPage> {
                                 _load();
                               }
                               return false;
-                            },
-                            child: ListView.separated(
+                            },                            child: ListView.separated(
                               cacheExtent: 900, controller: _scroll,
                               physics: const AlwaysScrollableScrollPhysics(
                                 parent: BouncingScrollPhysics(),
@@ -291,11 +339,15 @@ class _CommentPageState extends State<CommentPage> {
                               padding: const EdgeInsets.all(
                                 AppStyle.pagePadding,
                               ),
-                              itemCount: _comments.length,
+                              itemCount: _comments.length + 1,
                               separatorBuilder: (_, _) =>
                                   const SizedBox(height: 8),
-                              itemBuilder: (context, i) =>
-                                  _buildComment(theme, _comments[i]),
+                              itemBuilder: (context, i) {
+                                if (i == _comments.length) {
+                                  return _footer(theme);
+                                }
+                                return _buildComment(theme, _comments[i]);
+                              },
                             ),
                           ),
           ),
@@ -402,6 +454,34 @@ class _CommentPageState extends State<CommentPage> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _footer(ThemeData theme) {
+    if (_loadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (_hasMore) return const SizedBox(height: 16);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      child: Center(
+        child: Text(
+          L.t('noMore'),
+          style: TextStyle(
+            fontSize: 12,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
         ),
       ),
     );

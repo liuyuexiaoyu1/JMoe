@@ -712,5 +712,6 @@
   "bookmarkPageN": "p.{n}",
   "sortRecentlyUpdated": "Recently updated",
   "sortByFavTime": "By date added",
-  "downloadsTab": "Downloads"
+  "downloadsTab": "Downloads",
+  "noMore": "No more"
 }

@@ -14,7 +14,6 @@ import '../core/source.dart';
 import '../core/image_scrambler.dart';
 import '../core/image_cache.dart';
 import '../core/image_worker.dart';
-import '../core/jm_protocol.dart';
 import '../core/platform_caps.dart';
 import '../core/prefetch_controller.dart';
 import '../core/temp_store.dart';
@@ -257,13 +256,13 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
 
   void _schedulePrefetch(int index, int total) {
     if (_isLocal) return;
-    prefetch.settle();
     _settleTimer?.cancel();
-    _settleTimer = Timer(const Duration(milliseconds: 250), () {
-      if (mounted) prefetch.settle();
+    _settleTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        prefetch.settle();
+        _warmPages();
+      }
     });
-    prefetch.trimUiCache();
-    _warmPages();
   }
 
   void _warmPages() {
@@ -279,23 +278,31 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
       if (url == null || url.isEmpty) continue;
       if (ImageCacheManager.instance.getUiSync(url) != null) continue;
       prefetch.submit('${b.chapterId}:$i', () async {
-        final bytes = await ImageCacheManager.instance.load(
-          url,
-          fetcher: (u) => JmApi.instance.fetchBytes(u),
-        );
-        if (bytes == null) return null;
-        var data = bytes;
+        final cached = await ImageCacheManager.instance.readDiskTagged(url);
+        if (cached == null || cached.bytes.isEmpty) return null;
+        var data = cached.bytes;
         final sid = b.scrambleId;
-        if (sid != null &&
+        if (!cached.ready &&
+            sid != null &&
             ImageScrambler.needScramble(b.scrambleAid, sid, url)) {
           final pk = ImageScrambler.pageKeyFromUrl(url, page.index);
           final seg = ImageScrambler.segments(b.scrambleAid, pk);
           final jpg = await ImageWorker.instance.unscrambleToJpeg(
-            bytes: bytes,
+            bytes: cached.bytes,
             segments: seg,
             maxWidth: _decodeWidthPx,
           );
-          if (jpg != null) data = jpg;
+          if (jpg != null) {
+            data = jpg;
+            unawaited(
+              ImageCacheManager.instance.persistBytes(
+                url,
+                jpg,
+                overwrite: true,
+                ready: true,
+              ),
+            );
+          }
         }
         final img = await ImageCacheManager.decodeScaled(
           data,
@@ -478,7 +485,7 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
         ),
       );
 
-      final alreadyCached = CacheManager.instance.hasChapter(
+      final alreadyCached = CacheManager.instance.verifyChapter(
             widget.source.id,
             b.chapterId,
           ) ||

@@ -73,7 +73,13 @@ class ImageCacheManager {
 
   static const List<int> _magic = [0x4A, 0x4D, 0x43, 0x01];
 
-  static Uint8List encryptBytes(Uint8List plain, String url) {
+  static const List<int> _magicReady = [0x4A, 0x4D, 0x43, 0x02];
+
+  static Uint8List encryptBytes(
+    Uint8List plain,
+    String url, {
+    bool ready = false,
+  }) {
     final iv = _randomIv();
     final cipher = CBCBlockCipher(AESEngine())
       ..init(true, ParametersWithIV(KeyParameter(_keyFor(url)), iv));
@@ -85,15 +91,41 @@ class ImageCacheManager {
     for (var off = 0; off < padded.length; off += 16) {
       cipher.processBlock(padded, off, out, off);
     }
-    return Uint8List.fromList([..._magic, ...iv, ...out]);
+    return Uint8List.fromList([
+      ...(ready ? _magicReady : _magic),
+      ...iv,
+      ...out,
+    ]);
+  }
+
+  static bool isReadyFormat(Uint8List raw) {
+    if (raw.length < 4) return false;
+    for (var i = 0; i < 4; i++) {
+      if (raw[i] != _magicReady[i]) return false;
+    }
+    return true;
   }
 
   static Uint8List? decryptBytes(Uint8List raw, String url) {
     try {
       if (raw.length < 4 + 16 + 16) return null;
+      var ok = true;
       for (var i = 0; i < 4; i++) {
-        if (raw[i] != _magic[i]) return null;
+        if (raw[i] != _magic[i]) {
+          ok = false;
+          break;
+        }
       }
+      if (!ok) {
+        ok = true;
+        for (var i = 0; i < 4; i++) {
+          if (raw[i] != _magicReady[i]) {
+            ok = false;
+            break;
+          }
+        }
+      }
+      if (!ok) return null;
       final iv = Uint8List.sublistView(raw, 4, 20);
       final body = Uint8List.sublistView(raw, 20);
       final cipher = CBCBlockCipher(AESEngine())
@@ -118,6 +150,12 @@ class ImageCacheManager {
     _dir = d;
     return d;
   }
+
+  Future<void> ensureReady() async {
+    await _ensureDir();
+  }
+
+  bool get dirReady => _dir != null;
 
   String _keyOf(String url) => md5.convert(utf8.encode(url)).toString();
 
@@ -145,6 +183,33 @@ class ImageCacheManager {
       return plain;
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<({Uint8List bytes, bool ready})?> readDiskTagged(
+    String url,
+  ) async {
+    try {
+      await _ensureDir();
+      final f = _fileFor(url);
+      if (f == null || !f.existsSync()) return null;
+      final raw = await f.readAsBytes();
+      final ready = isReadyFormat(raw);
+      final plain = decryptBytes(raw, url);
+      if (plain == null || plain.isEmpty) return null;
+      return (bytes: plain, ready: ready);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool hasDisk(String url) {
+    final d = _dir;
+    if (d == null) return false;
+    try {
+      return File('${d.path}/${_keyOf(url)}.jmc').existsSync();
+    } catch (_) {
+      return false;
     }
   }
 
@@ -230,13 +295,18 @@ class ImageCacheManager {
     return bytes;
   }
 
-  Future<void> persistBytes(String url, Uint8List bytes) async {
+  Future<void> persistBytes(
+    String url,
+    Uint8List bytes, {
+    bool overwrite = false,
+    bool ready = false,
+  }) async {
     try {
       await _ensureDir();
       final f = _fileFor(url);
       if (f == null) return;
-      if (await f.exists() && await f.length() > 0) return;
-      final enc = encryptBytes(bytes, url);
+      if (!overwrite && await f.exists() && await f.length() > 0) return;
+      final enc = encryptBytes(bytes, url, ready: ready);
       await f.writeAsBytes(enc, flush: false);
     } catch (_) {}
   }

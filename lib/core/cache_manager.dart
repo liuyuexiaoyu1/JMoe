@@ -178,6 +178,21 @@ class CacheManager {
   bool hasChapter(String sourceId, String chapterId) =>
       _index.any((e) => e['key'] == '$sourceId:$chapterId');
 
+  bool verifyChapter(String sourceId, String chapterId) {
+    final key = '$sourceId:$chapterId';
+    for (final e in _index) {
+      if (e['key'] != key) continue;
+      final urls = (e['urls'] as List?)?.cast<String>() ?? const <String>[];
+      if (urls.isEmpty) return true;
+      var missing = 0;
+      for (final u in urls) {
+        if (!ImageCacheManager.instance.hasDisk(u)) missing++;
+      }
+      return missing * 4 <= urls.length;
+    }
+    return false;
+  }
+
   Future<void> markChapter({
     required String sourceId,
     required String comicId,

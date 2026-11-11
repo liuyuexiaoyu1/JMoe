@@ -472,7 +472,7 @@ class JmService {
     return (const <Comic>[], 0);
   }
 
-  Future<List<Map<String, dynamic>>> fetchComments({
+  Future<(List<Map<String, dynamic>>, int)> fetchComments({
     required String aid,
     int page = 1,
     String mode = 'manhua',
@@ -480,19 +480,23 @@ class JmService {
     final r = await _api.get('forum', {'mode': mode, 'aid': aid, 'page': page});
     final data = r['data'];
     final out = <Map<String, dynamic>>[];
+    var total = 0;
     if (data is Map) {
+      total = int.tryParse('${data['total'] ?? 0}') ?? 0;
       final list = data['list'] ?? data['content'] ?? data['comments'];
       if (list is List) {
         for (final c in list) {
           if (c is Map) out.add(Map<String, dynamic>.from(c));
         }
       }
+      if (total == 0 && out.isNotEmpty) total = out.length;
     } else if (data is List) {
       for (final c in data) {
         if (c is Map) out.add(Map<String, dynamic>.from(c));
       }
+      total = out.length;
     }
-    return out;
+    return (out, total);
   }
 
   Future<Map<String, dynamic>> sendComment({

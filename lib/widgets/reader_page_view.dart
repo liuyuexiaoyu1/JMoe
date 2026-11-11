@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../core/image_cache.dart';
@@ -101,8 +102,24 @@ class _ReaderPageViewState extends State<ReaderPageView> {
         chapterId: widget.chapterId,
       );
       if (bytes != null && bytes.isNotEmpty) {
+        Uint8List tdata = bytes;
+        final tsid = widget.scrambleId;
+        final turi = widget.ref.directUrl ?? widget.ref.resolveUrl ?? '';
+        if (tsid != null &&
+            turi.isNotEmpty &&
+            ImageScrambler.needScramble(widget.scrambleAid, tsid, turi)) {
+          final pk = ImageScrambler.pageKeyFromUrl(turi, widget.ref.index);
+          final seg = ImageScrambler.segments(widget.scrambleAid, pk);
+          final jpg = await ImageWorker.instance.unscrambleToJpeg(
+            bytes: bytes,
+            segments: seg,
+            maxWidth: widget.decodeWidth,
+            quality: 88,
+          );
+          if (jpg != null) tdata = jpg;
+        }
         final img = await ImageCacheManager.decodeScaled(
-          bytes,
+          tdata,
           targetWidth: widget.decodeWidth,
         );
         if (!mounted) return;
@@ -131,8 +148,52 @@ class _ReaderPageViewState extends State<ReaderPageView> {
       return;
     }
 
+    final local = await ImageCacheManager.instance.readDiskTagged(url);
+    if (local != null && local.bytes.isNotEmpty) {
+      Uint8List data = local.bytes;
+      if (!local.ready) {
+        final sid0 = widget.scrambleId;
+        if (sid0 != null &&
+            ImageScrambler.needScramble(widget.scrambleAid, sid0, url)) {
+          final pk = ImageScrambler.pageKeyFromUrl(url, widget.ref.index);
+          final seg = ImageScrambler.segments(widget.scrambleAid, pk);
+          final jpg = await ImageWorker.instance.unscrambleToJpeg(
+            bytes: local.bytes,
+            segments: seg,
+            maxWidth: widget.decodeWidth,
+            quality: 88,
+          );
+          if (jpg != null) {
+            data = jpg;
+            unawaited(
+              ImageCacheManager.instance.persistBytes(
+                url,
+                jpg,
+                overwrite: true,
+                ready: true,
+              ),
+            );
+          }
+        }
+      }
+      final img = await ImageCacheManager.decodeScaled(
+        data,
+        targetWidth: widget.decodeWidth,
+      );
+      if (img != null) {
+        ImageCacheManager.instance.putUi(url, img);
+        if (!mounted) return;
+        setState(() {
+          _image = img;
+          _failed = false;
+        });
+        return;
+      }
+    }
+
     final bytes = await ImageCacheManager.instance.load(
       url,
+      persist: true,
       fetcher: (u) async {
         final b = await JmApi.instance.fetchBytes(
           u,

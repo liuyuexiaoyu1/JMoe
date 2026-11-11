@@ -712,5 +712,6 @@
   "bookmarkPageN": "第 {n} 頁",
   "sortRecentlyUpdated": "最近更新",
   "sortByFavTime": "按收藏時間",
-  "downloadsTab": "下載"
+  "downloadsTab": "下載",
+  "noMore": "沒有更多了"
 }

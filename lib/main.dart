@@ -103,6 +103,7 @@ void main() async {
   SubscriptionStore.instance.loadAuthorBaselines();
   await CollectStore.instance.load();
   await HostStore.instance.load();
+  await ImageCacheManager.instance.ensureReady();
   SubscriptionChecker.instance.start();
   await ChapterDownloader.restoreFromDisk();
   unawaited(TempStore.instance.sweepOnStartup());
