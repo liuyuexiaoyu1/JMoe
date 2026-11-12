@@ -796,5 +796,7 @@
   "noItemsInTag": "该标签下还没有作品，长按作品可归类",
   "createTagFirst": "请先创建标签",
   "assignTags": "设置标签",
-  "storageCache": "网页缓存（封面与章节图片）"
+  "storageCache": "网页缓存（封面与章节图片）",
+  "cacheConcurrency": "缓存并发数",
+  "readingConcurrency": "阅读时并发数"
 }

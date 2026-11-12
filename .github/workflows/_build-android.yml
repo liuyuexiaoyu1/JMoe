@@ -36,21 +36,21 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
-
-      - name: Cache android build
-        uses: actions/cache@v4
-        with:
-          path: |
-            .dart_tool
-            build
-          key: android-${{ runner.os }}-${{ hashFiles('pubspec.lock', 'lib/**', 'android/**') }}
-          restore-keys: android-${{ runner.os }}-
 
       - run: flutter pub get
 
-      - run: flutter build apk --release --split-per-abi
+      # Gradle 并行 + build cache，充分利用 CI 多核并复用中间产物
+      - name: Build APK
+        run: flutter build apk --release --split-per-abi
+        env:
+          GRADLE_OPTS: >-
+            -Dorg.gradle.parallel=true
+            -Dorg.gradle.caching=true
+            -Dorg.gradle.configureondemand=true
+            -Dkotlin.incremental=true
+            -Dorg.gradle.workers.max=4
 
       - uses: actions/upload-artifact@v4
         with:

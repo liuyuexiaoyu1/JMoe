@@ -9,6 +9,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+
+import 'image_worker.dart';
 import 'package:pointycastle/api.dart' show KeyParameter, ParametersWithIV;
 import 'package:pointycastle/block/aes.dart';
 import 'package:pointycastle/block/modes/cbc.dart';
@@ -78,6 +80,35 @@ class ImageCacheManager {
   static const List<int> _magic = [0x4A, 0x4D, 0x43, 0x01];
 
   static const List<int> _magicReady = [0x4A, 0x4D, 0x43, 0x02];
+
+  static Future<Uint8List?> _encryptBg(
+    Uint8List plain,
+    String url, {
+    bool ready = false,
+  }) async {
+    final r = await ImageWorker.instance.crypt(
+      bytes: plain,
+      key: _keyFor(url),
+      iv: _randomIv(),
+      encrypt: true,
+      ready: ready,
+    );
+    // worker 不可用时退回同步实现，保证功能不丢。
+    return r ?? encryptBytes(plain, url, ready: ready);
+  }
+
+  static Future<Uint8List?> _decryptBg(Uint8List raw, String url) async {
+    if (raw.length < 4 + 16 + 16) return null;
+    final key = _keyFor(url);
+    final r = await ImageWorker.instance.crypt(
+      bytes: raw,
+      key: key,
+      iv: raw.sublist(4, 20),
+      encrypt: false,
+      ready: false,
+    );
+    return r ?? decryptBytes(raw, url);
+  }
 
   static Uint8List encryptBytes(
     Uint8List plain,
@@ -199,7 +230,7 @@ class ImageCacheManager {
       if (f == null || !f.existsSync()) return null;
       final raw = await f.readAsBytes();
       final ready = isReadyFormat(raw);
-      final plain = decryptBytes(raw, url);
+      final plain = await _decryptBg(raw, url);
       if (plain == null || plain.isEmpty) return null;
       return (bytes: plain, ready: ready);
     } catch (_) {
@@ -319,10 +350,11 @@ class ImageCacheManager {
       if (!overwrite && await f.exists() && await f.length() > 0) {
         return true;
       }
-      final enc = encryptBytes(bytes, url, ready: ready);
+      // AES 逐块运算留在主 isolate 会引起掉帧，交给 worker。
+      final enc = await _encryptBg(bytes, url, ready: ready);
+      if (enc == null) return false;
       // 每页都强制 fsync 会让离线缓存慢到不可用。
-      // 边看边缓存用 false（速度优先，丢了重下即可）；
-      // 离线下载需要时把 flushWrites 打开。
+      // 边看边缓存用 false（速度优先）；离线下载时才打开 flushWrites。
       await f.writeAsBytes(enc, flush: flushWrites);
       return true;
     } catch (e) {
@@ -494,12 +526,14 @@ class ImageCacheManager {
     required int to,
     int? targetWidth,
     int budgetPages = 12,
+    bool Function()? shouldCancel,
   }) async {
     final lo = from < 0 ? 0 : from;
     final hi = to > urls.length ? urls.length : to;
     var n = 0;
     for (var i = lo; i < hi; i++) {
       if (n >= budgetPages) break;
+      if (shouldCancel != null && shouldCancel()) return;
       final url = urls[i];
       if (url.isEmpty) continue;
       if (getUiSync(url) != null) continue;

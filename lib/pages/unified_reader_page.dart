@@ -1065,7 +1065,10 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
   /// 其余页留在磁盘，滑到附近再补；滑走的由 LRU 淘汰。
   Future<void> _predecodeWindow(ReadBundle b, int decodeW) async {
     if (_predecoding) return;
+    // 高速滑动期间不做预热：把主线程完全让给滚动。
+    if (_fastScroll.value) return;
     _predecoding = true;
+    final gen = ++_predecodeGen;
     try {
       final urls = <String>[];
       for (final p in b.pages) {
@@ -1074,10 +1077,12 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
       final cur = (_currentPage - 1).clamp(0, urls.length - 1);
       await ImageCacheManager.instance.predecodeRange(
         urls,
-        from: cur - 5,
-        to: cur + 6,
+        from: cur - 4,
+        to: cur + 5,
         targetWidth: decodeW,
-        budgetPages: 12,
+        budgetPages: 9,
+        // 一旦有更新的请求（用户继续滑动），当前这轮立即放弃
+        shouldCancel: () => !mounted || gen != _predecodeGen,
       );
     } finally {
       _predecoding = false;
@@ -1085,6 +1090,7 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
   }
 
   bool _predecoding = false;
+  int _predecodeGen = 0;
 
   Widget _seamlessTail() {
     final h = MediaQuery.of(context).size.height * 0.32;

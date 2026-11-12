@@ -29,6 +29,32 @@ dependencies:
   archive: ^4.0.7
   pointycastle: ^4.0.0
 
+  # ---- HarmonyOS 平台实现 ----
+  # 官方插件均无 ohos 平台代码，缺失会导致启动时
+  # SharedPreferences.getInstance() 抛 MissingPluginException，
+  # main() 未捕获 -> runApp 永不执行 -> 白屏。
+  shared_preferences_ohos:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_packages.git
+      path: packages/shared_preferences/shared_preferences_ohos
+      ref: master
+  path_provider_ohos:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_packages.git
+      path: packages/path_provider/path_provider_ohos
+      ref: master
+  url_launcher_ohos:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_packages.git
+      path: packages/url_launcher/url_launcher_ohos
+      ref: master
+  video_player_ohos:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_packages.git
+      path: packages/video_player/video_player_ohos
+      ref: master
+
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -47,3 +73,11 @@ flutter:
 dependency_overrides:
   path_provider_android: 2.2.23
   shared_preferences_android: 2.4.28
+  # flutter_cache_manager 3.5.0 要求 sqflite ^2.4.2，
+  # 不能用 issue 里提到的 2.2.8（会解析失败）。
+  # br_v2.4.2_ohos 分支同时满足版本约束并带 ohos 平台实现。
+  sqflite:
+    git:
+      url: https://gitcode.com/CPF-Flutter/flutter_sqflite.git
+      path: sqflite
+      ref: br_v2.4.2_ohos

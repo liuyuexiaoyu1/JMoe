@@ -14,14 +14,13 @@ jobs:
   analyze-and-test:
     uses: ./.github/workflows/_analyze.yml
 
+  # 三个构建与 analyze 并行：总耗时取决于最慢的 job，
+  # 而不是"analyze + 构建"相加。analyze 失败时整体仍红。
   build-apk:
-    needs: analyze-and-test
     uses: ./.github/workflows/_build-android.yml
 
   build-ios:
-    needs: analyze-and-test
     uses: ./.github/workflows/_build-ios.yml
 
   build-ohos:
-    needs: analyze-and-test
     uses: ./.github/workflows/_build-ohos.yml

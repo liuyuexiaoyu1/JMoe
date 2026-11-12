@@ -261,6 +261,26 @@ class _StoragePageState extends State<StoragePage> {
                           trailing: const Icon(Icons.chevron_right, size: 18),
                           onTap: _pickRetention,
                         ),
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(Icons.downloading_rounded),
+                          title: Text(L.t('cacheConcurrency')),
+                          subtitle: Text(
+                            '${AppState.instance.cacheConcurrency}',
+                          ),
+                          trailing: const Icon(Icons.chevron_right, size: 18),
+                          onTap: () => _pickConcurrency(reading: false),
+                        ),
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(Icons.bolt_rounded),
+                          title: Text(L.t('readingConcurrency')),
+                          subtitle: Text(
+                            '${AppState.instance.readingCacheConcurrency}',
+                          ),
+                          trailing: const Icon(Icons.chevron_right, size: 18),
+                          onTap: () => _pickConcurrency(reading: true),
+                        ),
                       ],
                     ),
                   ),
@@ -305,6 +325,36 @@ class _StoragePageState extends State<StoragePage> {
               ),
             ),
     );
+  }
+
+  Future<void> _pickConcurrency({required bool reading}) async {
+    const options = [1, 2, 3, 4, 6, 8];
+    final cur = reading
+        ? AppState.instance.readingCacheConcurrency
+        : AppState.instance.cacheConcurrency;
+    final sel = await showModalBottomSheet<int>(
+      context: context,
+      showDragHandle: true,
+      builder: (c) => ListView(
+        shrinkWrap: true,
+        children: options
+            .map(
+              (v) => ListTile(
+                title: Text('$v'),
+                trailing: cur == v ? const Icon(Icons.check, size: 18) : null,
+                onTap: () => Navigator.pop(c, v),
+              ),
+            )
+            .toList(),
+      ),
+    );
+    if (sel == null) return;
+    if (reading) {
+      await AppState.instance.setReadingCacheConcurrency(sel);
+    } else {
+      await AppState.instance.setCacheConcurrency(sel);
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _pickMaxSize() async {

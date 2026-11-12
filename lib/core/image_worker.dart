@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:isolate';
+
+import 'package:pointycastle/export.dart';
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as im;
@@ -93,6 +95,38 @@ class ImageWorker {
     }
   }
 
+  /// 在后台 isolate 做 AES-CBC 加解密。
+  ///
+  /// 每页图片几百 KB，纯 Dart 逐块运算放在主 isolate 会直接掉帧；
+  /// 这里挪到 worker，主线程只负责收结果。
+  Future<Uint8List?> crypt({
+    required Uint8List bytes,
+    required List<int> key,
+    required List<int> iv,
+    required bool encrypt,
+    required bool ready,
+  }) async {
+    try {
+      final port = await _ensureStarted();
+      final id = ++_seq;
+      final c = Completer<Uint8List?>();
+      _pending[id] = c;
+      port.send({
+        'id': id,
+        'op': 'crypt',
+        'bytes': bytes,
+        'key': key,
+        'iv': iv,
+        'encrypt': encrypt,
+        'ready': ready,
+      });
+      _scheduleIdleStop();
+      return await c.future;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static void _workerMain(SendPort reply) {
     final rp = ReceivePort();
     reply.send(rp.sendPort);
@@ -100,6 +134,17 @@ class ImageWorker {
       if (msg is! Map) return;
       final id = msg['id'] as int;
       try {
+        if (msg['op'] == 'crypt') {
+          final out = _crypt(
+            msg['bytes'] as Uint8List,
+            msg['key'] as List<int>,
+            msg['iv'] as List<int>,
+            msg['encrypt'] as bool,
+            msg['ready'] as bool,
+          );
+          reply.send({'id': id, 'data': out});
+          return;
+        }
         final out = _process(
           msg['bytes'] as Uint8List,
           msg['segments'] as int,
@@ -111,6 +156,52 @@ class ImageWorker {
         reply.send({'id': id, 'data': null});
       }
     });
+  }
+
+  static const _magic = [0x4A, 0x4D, 0x43, 0x01];
+  static const _magicReady = [0x4A, 0x4D, 0x43, 0x02];
+
+  static Uint8List? _crypt(
+    Uint8List input,
+    List<int> key,
+    List<int> iv,
+    bool encrypt,
+    bool ready,
+  ) {
+    final cipher = CBCBlockCipher(AESEngine())
+      ..init(
+        encrypt,
+        ParametersWithIV(
+          KeyParameter(Uint8List.fromList(key)),
+          Uint8List.fromList(iv),
+        ),
+      );
+
+    if (encrypt) {
+      final padLen = 16 - (input.length % 16);
+      final padded = Uint8List(input.length + padLen)
+        ..setRange(0, input.length, input)
+        ..fillRange(input.length, input.length + padLen, padLen);
+      final out = Uint8List(padded.length);
+      for (var off = 0; off < padded.length; off += 16) {
+        cipher.processBlock(padded, off, out, off);
+      }
+      return Uint8List.fromList([
+        ...(ready ? _magicReady : _magic),
+        ...iv,
+        ...out,
+      ]);
+    }
+
+    if (input.length < 4 + 16 + 16) return null;
+    final body = Uint8List.sublistView(input, 20);
+    final out = Uint8List(body.length);
+    for (var off = 0; off < body.length; off += 16) {
+      cipher.processBlock(body, off, out, off);
+    }
+    final pad = out[out.length - 1];
+    if (pad <= 0 || pad > 16) return null;
+    return Uint8List.sublistView(out, 0, out.length - pad);
   }
 
   static Uint8List? _process(

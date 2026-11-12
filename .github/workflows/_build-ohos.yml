@@ -13,16 +13,11 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl xz-utils zip libglu1-mesa libgl1-mesa-dev \
-            cmake ninja-build g++ jq
+          sudo apt-get install -y --no-install-recommends \
+            xz-utils zip libglu1-mesa cmake ninja-build g++ jq
 
-      - name: Cache ohos sdk
-        uses: actions/cache@v4
-        with:
-          path: ~/ohos-sdk
-          key: ohos-sdk-${{ runner.os }}-26.0.0.821
-          restore-keys: ohos-sdk-${{ runner.os }}-
-
+      # setup-ohos 自带下载缓存（cache: true），
+      # 额外再挂一个 ~/ohos-sdk 缓存会与它重复（实测两次安装共 169s）。
       - name: Setup HarmonyOS toolchain
         uses: ErBWs/setup-ohos@v2
         with:
@@ -61,7 +56,10 @@ jobs:
           key: pub-ohos-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: pub-ohos-${{ runner.os }}-
 
-      - run: flutter --version
+      # 不要用 flutter --version 探活：它会触发 engine artifact 下载（实测 79s）。
+      # 直接检查可执行文件即可。
+      - name: Verify flutter ohos
+        run: test -x "$HOME/flutter-ohos/bin/flutter" && echo ok
 
       - run: flutter pub get
 

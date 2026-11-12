@@ -141,6 +141,12 @@ class AppState extends ChangeNotifier {
 
   String imageQuality = 'medium';
 
+  /// 离线缓存并发数（1-8）。越大越快，但边看边缓存时会与阅读争抢。
+  int cacheConcurrency = 4;
+
+  /// 前台阅读时的缓存并发上限（更低，优先保证滑动流畅）。
+  int readingCacheConcurrency = 2;
+
   int startTab = 0;
 
   int gridColumns = 3;
@@ -203,6 +209,8 @@ class AppState extends ChangeNotifier {
     prefetchNextChapter = p.getBool('prefetchNextChapter') ?? true;
     confirmDelete = p.getBool('confirmDelete') ?? true;
     imageQuality = p.getString('imageQuality') ?? 'medium';
+    cacheConcurrency = p.getInt('cacheConcurrency') ?? 4;
+    readingCacheConcurrency = p.getInt('readingCacheConcurrency') ?? 2;
     startTab = p.getInt('startTab') ?? 0;
     gridColumns = p.getInt('gridColumns') ?? 3;
     bannerAutoPlay = p.getBool('bannerAutoPlay') ?? true;
@@ -458,6 +466,18 @@ class AppState extends ChangeNotifier {
     confirmDelete = v;
     notifyListeners();
     await _prefs?.setBool('confirmDelete', v);
+  }
+
+  Future<void> setCacheConcurrency(int v) async {
+    cacheConcurrency = v.clamp(1, 8);
+    notifyListeners();
+    await _prefs?.setInt('cacheConcurrency', cacheConcurrency);
+  }
+
+  Future<void> setReadingCacheConcurrency(int v) async {
+    readingCacheConcurrency = v.clamp(1, 8);
+    notifyListeners();
+    await _prefs?.setInt('readingCacheConcurrency', readingCacheConcurrency);
   }
 
   Future<void> setImageQuality(String v) async {
