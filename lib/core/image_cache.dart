@@ -42,6 +42,10 @@ class ImageCacheManager {
 
   static const int _maxUiTotal = 128 * 1024 * 1024;
 
+  /// 是否每次写入即强制落盘。
+  /// 离线下载开 true（下载完必须可靠）；边看边缓存用 false（速度优先）。
+  bool flushWrites = false;
+
   static const int _maxUiImages = 200;
   static const int _maxBytes = 512;
 
@@ -203,11 +207,18 @@ class ImageCacheManager {
     }
   }
 
+  /// 磁盘上是否存在**有效**缓存。
+  ///
+  /// 只判 exists 不够：写入中断会留下 0 字节或截断文件，
+  /// 那种情况读取必然失败，却会让上层误判为"已缓存"。
   bool hasDisk(String url) {
     final d = _dir;
     if (d == null) return false;
     try {
-      return File('${d.path}/${_keyOf(url)}.jmc').existsSync();
+      final f = File('${d.path}/${_keyOf(url)}.jmc');
+      if (!f.existsSync()) return false;
+      // magic(4) + iv(16) + 至少一个块(16)
+      return f.lengthSync() >= 36;
     } catch (_) {
       return false;
     }
@@ -295,7 +306,7 @@ class ImageCacheManager {
     return bytes;
   }
 
-  Future<void> persistBytes(
+  Future<bool> persistBytes(
     String url,
     Uint8List bytes, {
     bool overwrite = false,
@@ -304,11 +315,20 @@ class ImageCacheManager {
     try {
       await _ensureDir();
       final f = _fileFor(url);
-      if (f == null) return;
-      if (!overwrite && await f.exists() && await f.length() > 0) return;
+      if (f == null) return false;
+      if (!overwrite && await f.exists() && await f.length() > 0) {
+        return true;
+      }
       final enc = encryptBytes(bytes, url, ready: ready);
-      await f.writeAsBytes(enc, flush: false);
-    } catch (_) {}
+      // 每页都强制 fsync 会让离线缓存慢到不可用。
+      // 边看边缓存用 false（速度优先，丢了重下即可）；
+      // 离线下载需要时把 flushWrites 打开。
+      await f.writeAsBytes(enc, flush: flushWrites);
+      return true;
+    } catch (e) {
+      unawaited(AppLog.instance.log('IMG', 'persist failed $url: $e'));
+      return false;
+    }
   }
 
   Future<Uint8List?> loadForDownload(
@@ -442,6 +462,59 @@ class ImageCacheManager {
       return frame.image;
     } catch (_) {
       return decode(bytes);
+    }
+  }
+
+  /// 只解析图片头拿到宽高，不解码像素。
+  ///
+  /// `instantiateImageCodec` 会把整张图解码成纹理（很贵），
+  /// 而布局占位只需要尺寸，所以走轻量的头解析。
+  static Future<({int width, int height})?> probeSize(Uint8List bytes) async {
+    try {
+      final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+      final descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final w = descriptor.width;
+      final h = descriptor.height;
+      descriptor.dispose();
+      buffer.dispose();
+      if (w <= 0 || h <= 0) return null;
+      return (width: w, height: h);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 窗口式预热：只解码 [from, to) 区间的页。
+  ///
+  /// 不做整章预解码 —— 700 页的作品会吃掉 GB 级内存。
+  /// 只维护读者当前可见区间，滑走的部分由 LRU 自然淘汰。
+  Future<void> predecodeRange(
+    List<String> urls, {
+    required int from,
+    required int to,
+    int? targetWidth,
+    int budgetPages = 12,
+  }) async {
+    final lo = from < 0 ? 0 : from;
+    final hi = to > urls.length ? urls.length : to;
+    var n = 0;
+    for (var i = lo; i < hi; i++) {
+      if (n >= budgetPages) break;
+      final url = urls[i];
+      if (url.isEmpty) continue;
+      if (getUiSync(url) != null) continue;
+      final cached = await readDiskTagged(url);
+      if (cached == null || cached.bytes.isEmpty) continue;
+      if (!cached.ready) continue;
+      final img = await decodeScaled(
+        cached.bytes,
+        targetWidth: targetWidth,
+      );
+      if (img != null) {
+        putUi(url, img);
+        n++;
+      }
+      await Future<void>.delayed(Duration.zero);
     }
   }
 

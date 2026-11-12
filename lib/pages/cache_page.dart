@@ -6,6 +6,7 @@ import '../core/chapter_cache.dart';
 import '../core/novel_cache.dart';
 import '../core/temp_store.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/scroll_top_fab.dart';
 
 class CachePage extends StatefulWidget {
   const CachePage({super.key});
@@ -15,6 +16,17 @@ class CachePage extends StatefulWidget {
 }
 
 class _CachePageState extends State<CachePage> {
+  final _fabScroll = ScrollController();
+  double _fabOffset = 0;
+
+  void _fabOnScroll() {
+    if (!_fabScroll.hasClients) return;
+    final o = _fabScroll.position.pixels;
+    if ((o - _fabOffset).abs() > 40) {
+      setState(() => _fabOffset = o);
+    }
+  }
+
   int _usedBytes = 0;
   int _capBytes = 0;
   double _ratio = 0;
@@ -26,6 +38,7 @@ class _CachePageState extends State<CachePage> {
 
   @override
   void initState() {
+    _fabScroll.addListener(_fabOnScroll);
     super.initState();
     CacheManager.instance.revision.addListener(_refresh);
     _refresh();
@@ -33,6 +46,8 @@ class _CachePageState extends State<CachePage> {
 
   @override
   void dispose() {
+    _fabScroll.removeListener(_fabOnScroll);
+    _fabScroll.dispose();
     CacheManager.instance.revision.removeListener(_refresh);
     super.dispose();
   }
@@ -72,6 +87,18 @@ class _CachePageState extends State<CachePage> {
     final chapters = cm.cachedChapters;
 
     return Scaffold(
+      floatingActionButton: ScrollTopFab(
+        scrollOffset: _fabOffset,
+        onAction: () {
+          if (_fabScroll.hasClients) {
+            _fabScroll.animateTo(
+              0,
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        },
+      ),
       appBar: AppBar(
         title: Text(L.t('cacheManage')),
       ),
@@ -81,6 +108,7 @@ class _CachePageState extends State<CachePage> {
               onRefresh: _refresh,
               edgeOffset: MediaQuery.of(context).padding.top,
               child: ListView(
+                controller: _fabScroll,
               physics: const BouncingScrollPhysics(
                 parent: AlwaysScrollableScrollPhysics(),
               ),

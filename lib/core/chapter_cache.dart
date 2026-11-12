@@ -101,8 +101,11 @@ class ChapterCacheManager {
         task.readyCount = task.total;
         task.persistToDisk = persistToDisk;
         task.startPage = (startPage - 1).clamp(0, task.total - 1);
+        task.decodeWidth = decodeWidth;
         _tasks[key] = task;
         _notify();
+        // 已缓存章节：同样要预热，否则重进时又要逐页现读现解。
+        unawaited(_warmAfterComplete(task));
         return task;
       }
     }
@@ -128,6 +131,37 @@ class ChapterCacheManager {
     } catch (_) {}
   }
 
+  /// 窗口预热：只解码当前页前后各 30 页。
+  ///
+  /// 不做整章预解码 —— 700 页的作品会占 GB 级内存。
+  /// 内存占用因此恒定（约 60 页 × 7MB ≈ 420MB 上限，LRU 实际更少），
+  /// 超出窗口的页滑到附近时再补。
+  static const int warmRadius = 30;
+
+  Future<void> _warmAfterComplete(ChapterCacheTask task) async {
+    try {
+      final pages = task.bundle.pages;
+      final center = task.startPage.clamp(0, pages.length - 1);
+      final lo = (center - warmRadius).clamp(0, pages.length);
+      final hi = (center + warmRadius + 1).clamp(0, pages.length);
+      for (var i = lo; i < hi; i++) {
+        if (task.status == CacheStatus.cancelled) return;
+        final p = pages[i];
+        final u = p.directUrl ?? p.resolveUrl;
+        if (u == null || u.isEmpty) continue;
+        if (ImageCacheManager.instance.getUiSync(u) != null) continue;
+        final cached = await ImageCacheManager.instance.readDiskTagged(u);
+        if (cached == null || cached.bytes.isEmpty || !cached.ready) continue;
+        final img = await ImageCacheManager.decodeScaled(
+          cached.bytes,
+          targetWidth: task.decodeWidth,
+        );
+        if (img != null) ImageCacheManager.instance.putUi(u, img);
+        await Future<void>.delayed(Duration.zero);
+      }
+    } catch (_) {}
+  }
+
   Future<void> _prepareTemp(ChapterCacheTask task) async {
     try {
       task.tempDir = await TempStore.instance.dirFor(
@@ -142,6 +176,8 @@ class ChapterCacheManager {
 
   Future<void> _run(ChapterCacheTask task, int concurrency) async {
     task.status = CacheStatus.running;
+    // 离线缓存必须可靠落盘；边看边缓存速度优先。
+    ImageCacheManager.instance.flushWrites = task.persistToDisk;
     _notify();
 
     final bundle = task.bundle;
@@ -269,12 +305,18 @@ class ChapterCacheManager {
               }
 
               if (ready != null && ready.isNotEmpty) {
-                await ImageCacheManager.instance.persistBytes(
+                final wrote = await ImageCacheManager.instance.persistBytes(
                   url,
                   ready,
                   overwrite: true,
                   ready: needScramble,
                 );
+                // 写入失败就不认为完成，否则会留下"文件存在但读不出"的坑。
+                if (!wrote) {
+                  task.doneFlags[i] = false;
+                  task.done++;
+                  continue;
+                }
               }
 
               if (task.shouldDecodePage(i)) {
@@ -316,6 +358,8 @@ class ChapterCacheManager {
           ? CacheStatus.cancelled
           : CacheStatus.completed;
       if (task.status == CacheStatus.completed && task.readyCount > 0) {
+        // 缓存完成后后台预热：滑动时直接命内存，不再现读现解。
+        unawaited(_warmAfterComplete(task));
         final urls = <String>[];
         for (final p in bundle.pages) {
           final u = p.directUrl ?? p.resolveUrl;

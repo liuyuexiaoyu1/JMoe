@@ -717,16 +717,6 @@ class _HeroCard extends StatelessWidget {
                 child: CoverImage(url: cover),
               ),
             ),
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Colors.transparent, Colors.black54],
-                stops: [0.55, 1.0],
-              ),
-            ),
-          ),
           Positioned(
             left: 14,
             right: 14,

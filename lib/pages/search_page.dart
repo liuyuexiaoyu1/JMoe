@@ -1352,14 +1352,27 @@ class _SearchPageState extends State<SearchPage>
             itemBuilder: (context, i) {
               final n = _novels[i];
               final img = '${n['image'] ?? ''}';
+              final nid = '${n['id']}';
               return Card(
                 child: ListTile(
                   leading: SizedBox(
                     width: 48,
                     height: 64,
-                    child: CoverImage(
-                      url: img.isEmpty ? null : img,
-                      borderRadius: BorderRadius.circular(6),
+                    child: Hero(
+                      // 与小说详情页封面 Hero tag 保持一致
+                      tag: 'novel_$nid',
+                      flightShuttleBuilder: (ctx, anim, dir, from, to) {
+                        final t = Curves.easeInOutCubic.transform(anim.value);
+                        final a = dir == HeroFlightDirection.push ? t : 1 - t;
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(6 + 4 * a),
+                          child: CoverImage(url: img.isEmpty ? null : img),
+                        );
+                      },
+                      child: CoverImage(
+                        url: img.isEmpty ? null : img,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
                     ),
                   ),
                   title: Text(
@@ -1381,9 +1394,9 @@ class _SearchPageState extends State<SearchPage>
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => NovelDetailPage(
-                        nid: '${n['id']}',
+                        nid: nid,
                         title: '${n['name'] ?? ''}',
-                        cover: '${n['image'] ?? ''}',
+                        cover: img,
                       ),
                     ),
                   ),

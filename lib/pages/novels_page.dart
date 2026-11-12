@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 import '../core/jm_service.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/scroll_top_fab.dart';
 import '../core/l10n.dart';
 import 'novel_detail_page.dart';
 
@@ -14,6 +15,19 @@ class NovelsPage extends StatefulWidget {
 }
 
 class _NovelsPageState extends State<NovelsPage> {
+  final _scroll = ScrollController();
+  double _scrollOffset = 0;
+
+  String? _pendingFabTag;
+
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    final o = _scroll.position.pixels;
+    if ((o - _scrollOffset).abs() > 40) {
+      setState(() => _scrollOffset = o);
+    }
+  }
+
   final _service = JmService.instance;
   final _items = <Map<String, dynamic>>[];
   bool _loading = true;
@@ -22,6 +36,7 @@ class _NovelsPageState extends State<NovelsPage> {
 
   @override
   void initState() {
+    _scroll.addListener(_onScroll);
     super.initState();
     _load(reset: true);
   }
@@ -67,6 +82,19 @@ class _NovelsPageState extends State<NovelsPage> {
           ),
         ],
       ),
+      floatingActionButton: ScrollTopFab(
+        scrollOffset: _scrollOffset,
+        heroTag: _pendingFabTag,
+        onAction: () {
+          if (_scroll.hasClients) {
+            _scroll.animateTo(
+              0,
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        },
+      ),
       body: RefreshIndicator(
         onRefresh: () => _load(reset: true),
         edgeOffset: MediaQuery.of(context).padding.top,
@@ -91,6 +119,7 @@ class _NovelsPageState extends State<NovelsPage> {
                       return false;
                     },
                     child: ListView.separated(
+                      controller: _scroll,
                       padding: const EdgeInsets.all(AppStyle.pagePadding),
                       physics: const AlwaysScrollableScrollPhysics(),
                       itemCount: _items.length,
@@ -145,15 +174,28 @@ class _NovelsPageState extends State<NovelsPage> {
                               Icons.chevron_right,
                               size: 18,
                             ),
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => NovelDetailPage(
-                                  nid: '${n['id']}',
-                                  title: '${n['name'] ?? ''}',
-                                  cover: '${n['image'] ?? ''}',
+                            onTap: () async {
+                              final nid = '${n['id']}';
+                              _pendingFabTag = _scrollOffset > 120
+                                  ? 'novel_fab_$nid'
+                                  : null;
+                              setState(() {});
+                              await WidgetsBinding.instance.endOfFrame;
+                              if (!mounted) return;
+                              await Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => NovelDetailPage(
+                                    nid: nid,
+                                    title: '${n['name'] ?? ''}',
+                                    cover: '${n['image'] ?? ''}',
+                                    fabTag: _pendingFabTag,
+                                  ),
                                 ),
-                              ),
-                            ),
+                              );
+                              if (mounted) {
+                                setState(() => _pendingFabTag = null);
+                              }
+                            },
                           ),
                         );
                       },

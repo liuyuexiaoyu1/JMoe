@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
 import '../core/jm_service.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/scroll_top_fab.dart';
 import 'anime_player_page.dart';
 import '../core/l10n.dart';
 
@@ -14,6 +15,17 @@ class VideosPage extends StatefulWidget {
 }
 
 class _VideosPageState extends State<VideosPage> {
+  final _scroll = ScrollController();
+  double _scrollOffset = 0;
+
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    final o = _scroll.position.pixels;
+    if ((o - _scrollOffset).abs() > 40) {
+      setState(() => _scrollOffset = o);
+    }
+  }
+
   final _service = JmService.instance;
   final _items = <Map<String, dynamic>>[];
   bool _loading = true;
@@ -21,6 +33,7 @@ class _VideosPageState extends State<VideosPage> {
 
   @override
   void initState() {
+    _scroll.addListener(_onScroll);
     super.initState();
     _load(reset: true);
   }
@@ -54,6 +67,18 @@ class _VideosPageState extends State<VideosPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(L.t('anime'))),
+      floatingActionButton: ScrollTopFab(
+        scrollOffset: _scrollOffset,
+        onAction: () {
+          if (_scroll.hasClients) {
+            _scroll.animateTo(
+              0,
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        },
+      ),
       body: _loading && _items.isEmpty
           ? const Center(child: CircularProgressIndicator())
           : _items.isEmpty
@@ -66,6 +91,7 @@ class _VideosPageState extends State<VideosPage> {
                     return false;
                   },
                   child: GridView.builder(
+                    controller: _scroll,
                     padding: const EdgeInsets.all(AppStyle.pagePadding),
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(

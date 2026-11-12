@@ -195,6 +195,14 @@ class _LibraryPageState extends State<LibraryPage>
     if (failCount > 0) await _syncAndFetch();
   }
 
+  String _rawKindOf(String id) {
+    final fav = AppState.instance.localFavorites
+        .where((f) => '${f['id']}' == id)
+        .toList();
+    if (fav.isEmpty) return '';
+    return '${fav.first['type'] ?? ''}';
+  }
+
   String _kindOf(String id) {
     final fav = AppState.instance.localFavorites
         .where((f) => '${f['id']}' == id)
@@ -879,8 +887,13 @@ class _LibraryPageState extends State<LibraryPage>
                                     final isLocalOnly = state.loggedIn &&
                                         (!_cloudKnown ||
                                             !_inCloud(id));
-                                    final heroTag =
-                                        'cover_${c.source}_${c.id}';
+                                    // 小说详情页的封面 Hero tag 是
+                                    // novel_<id>，这里必须一致才有动画。
+                                    // 注意不能用 _kindOf（它返回本地化文案）。
+                                    final isNovel = _rawKindOf(id) == 'novel';
+                                    final heroTag = isNovel
+                                        ? 'novel_${c.id}'
+                                        : 'cover_${c.source}_${c.id}';
                                     final card = ComicCard(
                                       title: c.name,
                                       subtitle: c.author,

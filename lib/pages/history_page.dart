@@ -6,6 +6,7 @@ import '../core/eh_source.dart';
 import '../core/jm_source.dart';
 import '../core/models.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/scroll_top_fab.dart';
 import '../widgets/detail_route.dart';
 import 'anime_player_page.dart';
 import 'novel_detail_page.dart';
@@ -22,6 +23,24 @@ class HistoryPage extends StatefulWidget {
 class _HistoryPageState extends State<HistoryPage> {
   HistorySort _sort = HistorySort.recent;
 
+  final _fabScroll = ScrollController();
+  double _fabOffset = 0;
+
+  void _fabOnScroll() {
+    if (!_fabScroll.hasClients) return;
+    final o = _fabScroll.position.pixels;
+    if ((o - _fabOffset).abs() > 40) {
+      setState(() => _fabOffset = o);
+    }
+  }
+
+  @override
+  void dispose() {
+    _fabScroll.removeListener(_fabOnScroll);
+    _fabScroll.dispose();
+    super.dispose();
+  }
+
   final Set<String> _expanded = {};
 
   @override
@@ -31,6 +50,18 @@ class _HistoryPageState extends State<HistoryPage> {
     final groups = state.groupedHistory(sort: _sort);
 
     return Scaffold(
+      floatingActionButton: ScrollTopFab(
+        scrollOffset: _fabOffset,
+        onAction: () {
+          if (_fabScroll.hasClients) {
+            _fabScroll.animateTo(
+              0,
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        },
+      ),
       appBar: AppBar(
         title: Text(L.t('readHistory')),
         actions: [
@@ -65,6 +96,7 @@ class _HistoryPageState extends State<HistoryPage> {
       body: groups.isEmpty
           ? EmptyView(message: L.t('noHistory'), icon: Icons.history)
           : ListView.separated(
+              controller: _fabScroll,
               cacheExtent: 900, padding: const EdgeInsets.all(AppStyle.pagePadding),
               itemCount: groups.length,
               separatorBuilder: (_, _) => const SizedBox(height: 8),
@@ -129,7 +161,9 @@ class _HistoryPageState extends State<HistoryPage> {
                     width: 52,
                     height: 70,
                     child: Hero(
-                      tag: 'history_cover_${g.source}_${g.comicId}',
+                      tag: g.kind == 'novel'
+                    ? 'novel_${g.comicId}'
+                    : 'history_cover_${g.source}_${g.comicId}',
                       flightShuttleBuilder: (ctx, anim, dir, from, to) {
                         return ClipRRect(
                           borderRadius: BorderRadius.circular(6),

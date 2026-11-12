@@ -25,8 +25,11 @@ class StorageManager {
   static final StorageManager instance = StorageManager._();
 
   Future<List<StorageSlice>> collect() async {
+    // 注意：CacheManager 与 ImageCacheManager 用的是**同一个目录**
+    // （cache/imgcache），章节图片就是普通缓存文件。
+    // 所以「图片缓存」和「漫画章节」不能分开统计，否则数字重复、
+    // 清任意一项都会把全部缓存删光。这里合并为单一「网页缓存」项。
     final img = await ImageCacheManager.instance.diskUsage();
-    final chapters = await _chapterBytes();
     final novel = await NovelCacheManager.instance.usedBytes();
     final video = await VideoCacheManager.instance.usedBytes();
     final downloads = ChapterDownloader.totalDownloadBytes();
@@ -34,8 +37,7 @@ class StorageManager {
     final config = await _dirBytes(Directory('${base.path}/config'));
 
     return [
-      StorageSlice(key: 'storageImages', bytes: img),
-      StorageSlice(key: 'storageChapters', bytes: chapters),
+      StorageSlice(key: 'storageCache', bytes: img),
       StorageSlice(key: 'storageDownloads', bytes: downloads),
       StorageSlice(key: 'storageNovels', bytes: novel),
       StorageSlice(key: 'storageVideos', bytes: video),
@@ -52,14 +54,6 @@ class StorageManager {
     return list.fold<int>(0, (a, b) => a + b.bytes);
   }
 
-  Future<int> _chapterBytes() async {
-    try {
-      final s = await CacheManager.instance.usageStats();
-      return s.used;
-    } catch (_) {
-      return 0;
-    }
-  }
 
   Future<int> _dirBytes(Directory d) async {
     try {
@@ -76,10 +70,9 @@ class StorageManager {
 
   Future<void> clear(String key) async {
     switch (key) {
-      case 'storageImages':
+      case 'storageCache':
+        // 图片缓存与章节缓存是同一批文件，必须一起清。
         await ImageCacheManager.instance.clearDisk();
-        break;
-      case 'storageChapters':
         await CacheManager.instance.clearAll();
         break;
       case 'storageDownloads':

@@ -58,6 +58,12 @@ class PrefetchController {
     return out;
   }
 
+  /// 解码并发上限：磁盘读取串行（避免 IO 争抢），
+  /// 解码交给多个 worker 并行（充分利用多核）。
+  static const int decodeConcurrency = 3;
+
+  int _decoding = 0;
+
   void submit(String key, Future<Object?> Function() task) {
     if (_pending.contains(key)) return;
     _pending.add(key);
@@ -65,16 +71,28 @@ class PrefetchController {
     unawaited(_drain());
   }
 
+  /// 串行读取：一次只从磁盘读一页，读完立即交给解码池。
   Future<void> _drain() async {
     if (_draining) return;
     _draining = true;
     try {
       while (_queue.isNotEmpty) {
         final job = _queue.removeFirst();
-        try {
-          await job.run();
-        } catch (_) {}
-        _pending.remove(job.key);
+        // 解码槽位满则等待
+        while (_decoding >= decodeConcurrency) {
+          await Future<void>.delayed(const Duration(milliseconds: 8));
+        }
+        _decoding++;
+        unawaited(
+          job
+              .run()
+              .catchError((_) => null)
+              .whenComplete(() {
+            _decoding--;
+            _pending.remove(job.key);
+          }),
+        );
+        // 读下一张前让出一帧，保持主线程响应
         await Future<void>.delayed(Duration.zero);
       }
     } finally {

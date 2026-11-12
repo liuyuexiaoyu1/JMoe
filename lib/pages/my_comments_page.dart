@@ -7,6 +7,7 @@ import '../core/l10n.dart';
 import '../core/models.dart';
 import '../widgets/detail_route.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/scroll_top_fab.dart';
 import 'unified_detail_page.dart';
 import 'unified_home_page.dart';
 
@@ -18,6 +19,16 @@ class MyCommentsPage extends StatefulWidget {
 }
 
 class _MyCommentsPageState extends State<MyCommentsPage> {
+  double _fabOffset = 0;
+
+  void _fabOnScroll() {
+    if (!_scroll.hasClients) return;
+    final o = _scroll.position.pixels;
+    if ((o - _fabOffset).abs() > 40) {
+      setState(() => _fabOffset = o);
+    }
+  }
+
   final _service = JmService.instance;
   final _scroll = ScrollController();
   final _items = <Map<String, dynamic>>[];
@@ -33,6 +44,7 @@ class _MyCommentsPageState extends State<MyCommentsPage> {
 
   @override
   void initState() {
+    _scroll.addListener(_fabOnScroll);
     super.initState();
     _scroll.addListener(_onScroll);
     _load(reset: true);
@@ -40,6 +52,7 @@ class _MyCommentsPageState extends State<MyCommentsPage> {
 
   @override
   void dispose() {
+    _scroll.removeListener(_fabOnScroll);
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
     super.dispose();
@@ -186,6 +199,18 @@ class _MyCommentsPageState extends State<MyCommentsPage> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Scaffold(
+      floatingActionButton: ScrollTopFab(
+        scrollOffset: _fabOffset,
+        onAction: () {
+          if (_scroll.hasClients) {
+            _scroll.animateTo(
+              0,
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        },
+      ),
       appBar: AppBar(
         title: Text(L.t('myComments')),
         actions: [

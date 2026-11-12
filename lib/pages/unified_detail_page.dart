@@ -520,6 +520,22 @@ class _UnifiedDetailPageState extends State<UnifiedDetailPage> {
               filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
               child: Container(color: Colors.black26),
             ),
+            // 卡片下方的白色渐变：让封面自然过渡到页面背景，
+            // 避免出现一条生硬的深色边。
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withValues(alpha: 0.45),
+                    theme.colorScheme.surface,
+                  ],
+                  stops: const [0.42, 0.85, 1],
+                ),
+              ),
+            ),
             Positioned(
               left: 16,
               right: 16,

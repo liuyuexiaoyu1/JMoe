@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import '../core/app_log.dart';
 import '../core/app_state.dart';
 import '../core/cache_manager.dart';
 import '../core/chapter_cache.dart';
@@ -102,6 +105,12 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
   bool _seamlessOn = true;
 
   bool _zooming = false;
+
+  /// 高速滚动中：推迟解码，避免主线程排队。
+  /// 用 ValueNotifier 而不是 setState —— 后者会重建整个 35 页列表。
+  final _fastScroll = ValueNotifier<bool>(false);
+
+  Timer? _fastScrollTimer;
   ChapterCacheTask? _task;
   bool _loading = true;
   String? _error;
@@ -132,6 +141,7 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
     final startIndex = (widget.initialPage - 1).clamp(0, 1 << 30);
     _pageController = PageController(initialPage: startIndex);
     _scroll.addListener(_onScroll);
+    _installFrameProbe();
     ChapterCacheManager.instance.revision.addListener(_onCacheTick);
     if (PlatformCaps.supportsVolumeKeyPaging &&
         AppState.instance.volumeKeyPage) {
@@ -229,6 +239,42 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
     _cacheNotifier.value = ready;
   }
 
+  Timer? _probeTimer;
+  int _probeFrames = 0;
+  double _probeWorstBuild = 0;
+  double _probeWorstRaster = 0;
+
+  void _installFrameProbe() {
+    if (kReleaseMode) return;
+    SchedulerBinding.instance.addTimingsCallback((timings) {
+      for (final t in timings) {
+        _probeFrames++;
+        final b = t.buildDuration.inMicroseconds / 1000.0;
+        final r = t.rasterDuration.inMicroseconds / 1000.0;
+        if (b > _probeWorstBuild) _probeWorstBuild = b;
+        if (r > _probeWorstRaster) _probeWorstRaster = r;
+      }
+    });
+    // 每 2 秒汇总一次，只在超过阈值时才写日志
+    _probeTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_probeFrames == 0) return;
+      final worstB = _probeWorstBuild;
+      final worstR = _probeWorstRaster;
+      if (worstB > 16 || worstR > 16) {
+        unawaited(
+          AppLog.instance.log(
+            'PERF',
+            'frames=$_probeFrames worstBuild=${worstB.toStringAsFixed(1)}ms '
+            'worstRaster=${worstR.toStringAsFixed(1)}ms',
+          ),
+        );
+      }
+      _probeFrames = 0;
+      _probeWorstBuild = 0;
+      _probeWorstRaster = 0;
+    });
+  }
+
   void _onScroll() {
     if (!_vertical) return;
     if (!_scroll.hasClients) return;
@@ -249,11 +295,24 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
     _lastScrollPixels = pos.pixels;
     if (delta.abs() > 0.5) prefetch.noteScroll(delta);
 
+    // 单帧位移超过 60px 视为高速滑动（只更通知量，不重建列表）
+    if (delta.abs() > 60) {
+      if (!_fastScroll.value) _fastScroll.value = true;
+      _fastScrollTimer?.cancel();
+    _probeTimer?.cancel();
+    _fastScroll.dispose();
+      _fastScrollTimer = Timer(const Duration(milliseconds: 160), () {
+        if (mounted && _fastScroll.value) _fastScroll.value = false;
+      });
+    }
+
     if (page != _currentPage) {
       _currentPage = page;
       _saveProgress(page);
       _task?.startPage = page - 1;
       _schedulePrefetch(page - 1, total);
+      final bb = _bundle;
+      if (bb != null) unawaited(_predecodeWindow(bb, _decodeWidthPx));
     }
 
     final b = _bundle;
@@ -268,14 +327,18 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
 
   void _schedulePrefetch(int index, int total) {
     if (_isLocal) return;
+    // 节流：快速滑动时每帧都调会堆出大量重复任务，反而拖慢。
+    if (_warmThrottle) return;
+    _warmThrottle = true;
+    _warmPages();
+    Timer(const Duration(milliseconds: 180), () => _warmThrottle = false);
     _settleTimer?.cancel();
-    _settleTimer = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) {
-        prefetch.settle();
-        _warmPages();
-      }
+    _settleTimer = Timer(const Duration(milliseconds: 220), () {
+      if (mounted) prefetch.settle();
     });
   }
+
+  bool _warmThrottle = false;
 
   void _warmPages() {
     final b = _bundle;
@@ -283,16 +346,25 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
     final total = b.length;
     if (total == 0) return;
     final cur = (_currentPage - 1).clamp(0, total - 1);
-    final window = prefetch.windowFor(cur, total);
+    // 前后各 4 页：窗口过大会在快速滑动时堆出大量重复任务。
+    final window = <int>[
+      cur,
+      for (var d = 1; d <= 4; d++) ...[
+        if (cur + d < total) cur + d,
+        if (cur - d >= 0) cur - d,
+      ],
+    ];
     for (final i in window) {
       final page = b.pages[i];
       final url = page.directUrl ?? page.resolveUrl;
       if (url == null || url.isEmpty) continue;
       if (ImageCacheManager.instance.getUiSync(url) != null) continue;
       prefetch.submit('${b.chapterId}:$i', () async {
+        // 阶段一：串行读盘（由 prefetch 队列保证一次只读一页）
         final cached = await ImageCacheManager.instance.readDiskTagged(url);
         if (cached == null || cached.bytes.isEmpty) return null;
-        var data = cached.bytes;
+
+        Uint8List data = cached.bytes;
         final sid = b.scrambleId;
         if (!cached.ready &&
             sid != null &&
@@ -316,6 +388,8 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
             );
           }
         }
+
+        // 阶段二：解码（由解码池并行执行）
         final img = await ImageCacheManager.decodeScaled(
           data,
           targetWidth: _decodeWidthPx,
@@ -765,7 +839,7 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
       });
     }
     return ListView.builder(
-      cacheExtent: 2000, controller: _scroll,
+      cacheExtent: 1200, controller: _scroll,
       itemCount: _localFiles.length,
       physics: _zooming
           ? const NeverScrollableScrollPhysics()
@@ -820,14 +894,21 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
         _scroll.jumpTo(target.clamp(0.0, _scroll.position.maxScrollExtent));
       });
     }
-    final decodeW =
-        (MediaQuery.of(context).size.width *
-                MediaQuery.of(context).devicePixelRatio)
-            .round();
+    // 解码宽度必须**等于实际显示宽度**（屏幕逻辑宽 × dpr）。
+    //
+    // 若解码宽度小于显示宽度，RawImage 每帧都要把纹理放大重采样，
+    // GPU 双线性插值会吃掉大量填充率 —— 这是滑动掉帧的关键原因之一。
+    // 宁可多占一点内存，也要让 1 纹理像素 = 1 物理像素。
+    final mq = MediaQuery.of(context);
+    final decodeW = (mq.size.width * mq.devicePixelRatio).round();
     _lastDecodeWidth = decodeW;
+
+    // 进入章节即批量读取每页真实尺寸（只解析文件头，很快），
+    // 这样布局占位从一开始就是准确的，不依赖相邻页猜测。
+    _probeAllRatios(b);
     final hasTail = _seamlessOn && _hasNext;
     final list = ListView.builder(
-      cacheExtent: 2000, controller: _scroll,
+      cacheExtent: 1200, controller: _scroll,
       itemCount: b.length + (hasTail ? 1 : 0),
       physics: _zooming
           ? const NeverScrollableScrollPhysics()
@@ -858,20 +939,25 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
       },
     );
 
-    // 所有页视为一张超长图整体缩放，锚定手指焦点。
+    // Listener 常驻（开销很低，只记录指针位置），
+    // 但 Transform **只在真正缩放时才套上**：
+    // 常驻 Transform 会让 ListView 失去图层缓存，
+    // 每帧重新光栅化全部可见页 —— 这是滑动掉帧的主因。
     final viewport = MediaQuery.of(context).size;
     return Listener(
       onPointerDown: (e) => _zoomDown(e, viewport),
       onPointerMove: _zoomMove,
       onPointerUp: _zoomUp,
       onPointerCancel: _zoomUp,
-      child: Transform(
-        alignment: Alignment.topLeft,
-        transform: Matrix4.identity()
-          ..translate(_zoomPan.dx, _zoomPan.dy)
-          ..scale(_zoomScale),
-        child: list,
-      ),
+      child: _zoomScale <= 1.001
+          ? list
+          : Transform(
+              alignment: Alignment.topLeft,
+              transform: Matrix4.identity()
+                ..translate(_zoomPan.dx, _zoomPan.dy)
+                ..scale(_zoomScale),
+              child: list,
+            ),
     );
   }
 
@@ -947,6 +1033,58 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
       }
     }
   }
+
+  bool _probing = false;
+
+  Future<void> _probeAllRatios(ReadBundle b) async {
+    if (_probing) return;
+    _probing = true;
+    try {
+      for (var i = 0; i < b.length; i++) {
+        if (!mounted) return;
+        if (_ratios.containsKey(i)) continue;
+        final page = b.pages[i];
+        final url = page.directUrl ?? page.resolveUrl;
+        if (url == null || url.isEmpty) continue;
+        final cached = await ImageCacheManager.instance.readDiskTagged(url);
+        if (cached == null || cached.bytes.isEmpty) continue;
+        final sz = await ImageCacheManager.probeSize(cached.bytes);
+        if (sz == null) continue;
+        _ratios[i] = sz.width / sz.height;
+        await Future<void>.delayed(Duration.zero);
+      }
+      if (mounted) setState(() {});
+    } finally {
+      _probing = false;
+    }
+  }
+
+  /// 只预热当前页前后各 5 页（最多 12 页）。
+  ///
+  /// 700 页的作品整章预解码会占 GB 级内存，所以只维护滑动窗口，
+  /// 其余页留在磁盘，滑到附近再补；滑走的由 LRU 淘汰。
+  Future<void> _predecodeWindow(ReadBundle b, int decodeW) async {
+    if (_predecoding) return;
+    _predecoding = true;
+    try {
+      final urls = <String>[];
+      for (final p in b.pages) {
+        urls.add(p.directUrl ?? p.resolveUrl ?? '');
+      }
+      final cur = (_currentPage - 1).clamp(0, urls.length - 1);
+      await ImageCacheManager.instance.predecodeRange(
+        urls,
+        from: cur - 5,
+        to: cur + 6,
+        targetWidth: decodeW,
+        budgetPages: 12,
+      );
+    } finally {
+      _predecoding = false;
+    }
+  }
+
+  bool _predecoding = false;
 
   Widget _seamlessTail() {
     final h = MediaQuery.of(context).size.height * 0.32;

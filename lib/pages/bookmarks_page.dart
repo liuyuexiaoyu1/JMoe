@@ -6,6 +6,7 @@ import '../core/l10n.dart';
 import '../core/jm_service.dart';
 import '../core/models.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/scroll_top_fab.dart';
 import 'novel_read_page.dart';
 import 'unified_home_page.dart';
 import 'unified_reader_page.dart';
@@ -18,14 +19,28 @@ class BookmarksPage extends StatefulWidget {
 }
 
 class _BookmarksPageState extends State<BookmarksPage> {
+  final _fabScroll = ScrollController();
+  double _fabOffset = 0;
+
+  void _fabOnScroll() {
+    if (!_fabScroll.hasClients) return;
+    final o = _fabScroll.position.pixels;
+    if ((o - _fabOffset).abs() > 40) {
+      setState(() => _fabOffset = o);
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _fabScroll.addListener(_fabOnScroll);
     AppState.instance.addListener(_onChanged);
   }
 
   @override
   void dispose() {
+    _fabScroll.removeListener(_fabOnScroll);
+    _fabScroll.dispose();
     AppState.instance.removeListener(_onChanged);
     super.dispose();
   }
@@ -162,12 +177,25 @@ class _BookmarksPageState extends State<BookmarksPage> {
 
     return Scaffold(
       appBar: AppBar(title: Text(L.t('bookmarks'))),
+      floatingActionButton: ScrollTopFab(
+        scrollOffset: _fabOffset,
+        onAction: () {
+          if (_fabScroll.hasClients) {
+            _fabScroll.animateTo(
+              0,
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        },
+      ),
       body: items.isEmpty
           ? EmptyView(
               message: L.t('bookmarksEmpty'),
               icon: Icons.bookmark_border_rounded,
             )
           : ListView.separated(
+              controller: _fabScroll,
               padding: const EdgeInsets.all(AppStyle.pagePadding),
               itemCount: items.length,
               separatorBuilder: (_, _) => const SizedBox(height: 8),

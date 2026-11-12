@@ -795,5 +795,6 @@
   "noFavoritesToTag": "No favorites yet",
   "noItemsInTag": "No works in this tag; long-press a work to assign",
   "createTagFirst": "Create a tag first",
-  "assignTags": "Assign tags"
+  "assignTags": "Assign tags",
+  "storageCache": "Web cache (covers & chapter images)"
 }

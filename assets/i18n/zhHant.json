@@ -795,5 +795,6 @@
   "noFavoritesToTag": "還沒有收藏作品",
   "noItemsInTag": "該標籤下還沒有作品，長按作品可歸類",
   "createTagFirst": "請先建立標籤",
-  "assignTags": "設定標籤"
+  "assignTags": "設定標籤",
+  "storageCache": "網頁快取（封面與章節圖片）"
 }

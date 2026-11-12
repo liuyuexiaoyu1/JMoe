@@ -5,6 +5,7 @@ import '../core/app_theme.dart';
 import '../core/jm_service.dart';
 import '../core/models.dart';
 import '../widgets/common_widgets.dart';
+import '../widgets/scroll_top_fab.dart';
 import '../widgets/detail_route.dart';
 import 'unified_detail_page.dart';
 import 'unified_home_page.dart';
@@ -18,6 +19,17 @@ class WeekPage extends StatefulWidget {
 }
 
 class _WeekPageState extends State<WeekPage> {
+  final _fabScroll = ScrollController();
+  double _fabOffset = 0;
+
+  void _fabOnScroll() {
+    if (!_fabScroll.hasClients) return;
+    final o = _fabScroll.position.pixels;
+    if ((o - _fabOffset).abs() > 40) {
+      setState(() => _fabOffset = o);
+    }
+  }
+
   final _service = JmService.instance;
   final _pageCtrl = PageController();
   final _chipCtrl = ScrollController();
@@ -45,12 +57,15 @@ class _WeekPageState extends State<WeekPage> {
 
   @override
   void initState() {
+    _fabScroll.addListener(_fabOnScroll);
     super.initState();
     _loadWeeks();
   }
 
   @override
   void dispose() {
+    _fabScroll.removeListener(_fabOnScroll);
+    _fabScroll.dispose();
     _pageCtrl.dispose();
     _chipCtrl.dispose();
     super.dispose();
@@ -156,6 +171,18 @@ class _WeekPageState extends State<WeekPage> {
 
     if (_bootLoading) {
       return Scaffold(
+      floatingActionButton: ScrollTopFab(
+        scrollOffset: _fabOffset,
+        onAction: () {
+          if (_fabScroll.hasClients) {
+            _fabScroll.animateTo(
+              0,
+              duration: const Duration(milliseconds: 420),
+              curve: Curves.easeOutCubic,
+            );
+          }
+        },
+      ),
         appBar: AppBar(title: Text(L.t('weeklyMustSee'))),
         body: const Center(child: CircularProgressIndicator()),
       );
@@ -268,6 +295,8 @@ class _WeekPageState extends State<WeekPage> {
         const gap = 10.0;
         final cardW = (box.maxWidth - gap * (cols - 1) - 24) / cols;
         return SingleChildScrollView(
+          key: PageStorageKey('week_$i'),
+          controller: i == _index ? _fabScroll : null,
           padding: const EdgeInsets.all(AppStyle.pagePadding),
           child: Wrap(
             spacing: gap,

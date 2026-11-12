@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../core/app_state.dart';
 import '../core/image_cache.dart';
@@ -23,6 +24,9 @@ class ReaderPageView extends StatefulWidget {
   final BoxFit fit;
 
   final bool enableZoom;
+
+  /// 外层正在高速滚动：此时不做解码，避免主线程排队卡顿。
+  final bool deferDecode;
 
   /// 缩放状态变化时回调，供外层禁用列表滚动
   final ValueChanged<bool>? onZoomChanged;
@@ -49,6 +53,7 @@ class ReaderPageView extends StatefulWidget {
     this.tempDir,
     this.fit = BoxFit.fitWidth,
     this.enableZoom = true,
+    this.deferDecode = false,
     this.onZoomChanged,
     this.fallbackRatio = 0.72,
     this.decodeWidth,
@@ -86,19 +91,23 @@ class _ReaderPageViewState extends State<ReaderPageView> {
       }
     }
     unawaited(ReadingStats.instance.recordCache(hit: false));
+    if (widget.deferDecode) {
+      _started = false;
+      return;
+    }
     _start();
   }
 
   @override
   void didUpdateWidget(covariant ReaderPageView old) {
     super.didUpdateWidget(old);
-    if (old.cacheKey != widget.cacheKey) {
-      _image = null;
-      _failed = false;
-      _started = false;
+    // 滚动停止后补上之前推迟的解码
+    if (!old.deferDecode && widget.deferDecode) return;
+    if (old.deferDecode && !widget.deferDecode && !_started) {
       _syncHit();
     }
   }
+
 
   Future<void> _start() async {
     if (_started) return;
@@ -325,8 +334,10 @@ class _ReaderPageViewState extends State<ReaderPageView> {
         ),
       );
     }
-    final ratio = img.width / img.height <= 0 ? 0.72 : img.width / img.height;
-    widget.onLoaded?.call(ratio);
+    // 用固定的 fallbackRatio 布局，避免图片加载后比例变化导致
+    // 整个列表重新测量（35 页会累积成几十次布局跳动 = 明显卡顿）。
+    final ratio = widget.fallbackRatio <= 0 ? 0.72 : widget.fallbackRatio;
+    widget.onLoaded?.call(img.width / img.height);
 
     final pic = RawImage(
       image: img,
