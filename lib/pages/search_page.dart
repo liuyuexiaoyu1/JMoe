@@ -785,6 +785,7 @@ class _SearchPageState extends State<SearchPage>
             InkResponse(
               canRequestFocus: false,
               onTap: () {
+                final hadFocus = _focus.hasFocus;
                 setState(() {
                   _tags.removeAt(index);
                   if (_editingTagIndex == index) {
@@ -795,12 +796,13 @@ class _SearchPageState extends State<SearchPage>
                       _editingTagIndex! > index) {
                     _editingTagIndex = _editingTagIndex! - 1;
                   }
-                  if (_tags.isEmpty) {
-                    _tagMode = false;
-                    _lastQuery = '';
-                  }
                 });
-                if (_tags.isEmpty) _clearResults();
+                if (hadFocus) {
+                  _focus.requestFocus();
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _focus.requestFocus();
+                  });
+                }
                 _focus.requestFocus();
               },
               radius: 14,
@@ -1218,7 +1220,9 @@ class _SearchPageState extends State<SearchPage>
                 _tagEditCtrl?.dispose();
                 _tagEditCtrl = null;
               }
-              _pendingFabTag = 'fab_${_source.id}_${c.id}';
+              _pendingFabTag = _scrollOffset > 120
+                  ? 'fab_${_source.id}_${c.id}'
+                  : null;
               setState(() {
                 _editingTagIndex = null;
               });

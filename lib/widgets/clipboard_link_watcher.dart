@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/app_theme.dart';
 import '../core/jm_source.dart';
 import '../core/models.dart';
+import '../core/app_log.dart';
 import '../core/l10n.dart';
 import '../pages/unified_detail_page.dart';
 import '../pages/unified_home_page.dart';
@@ -25,15 +26,20 @@ class _ClipboardLinkWatcherState extends State<ClipboardLinkWatcher>
 
   bool _showing = false;
 
+  bool _ready = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _loadHandled();
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await Future<void>.delayed(const Duration(milliseconds: 700));
-      if (mounted) _checkClipboard();
-    });
+    _boot();
+  }
+
+  Future<void> _boot() async {
+    await _loadHandled();
+    _ready = true;
+    await Future<void>.delayed(const Duration(milliseconds: 900));
+    if (mounted) await _checkClipboard();
   }
 
   @override
@@ -84,7 +90,9 @@ class _ClipboardLinkWatcherState extends State<ClipboardLinkWatcher>
   }
 
   Future<void> _checkClipboard() async {
+    if (!_ready) return;
     if (_showing) return;
+    if (!mounted) return;
     String? raw;
     try {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
@@ -94,34 +102,38 @@ class _ClipboardLinkWatcherState extends State<ClipboardLinkWatcher>
     }
     if (raw == null) return;
     final text = raw.trim();
+    final preview = text.length > 50 ? text.substring(0, 50) : text;
+    AppLog.instance.log(
+      'CLIP',
+      'len=${text.length} preview=$preview handled=${_handled.length}',
+    );
     if (!_looksLikeLink(text)) {
+      AppLog.instance.log('CLIP', 'skip: not a link');
       return;
     }
     if (_handled.contains(text)) {
+      AppLog.instance.log('CLIP', 'skip: already handled');
       return;
     }
+    AppLog.instance.log('CLIP', 'will prompt');
     final id = _extractAlbumId(text);
     if (id == null) return;
+    _handled.add(text);
+    await _saveHandled();
     _showing = true;
     if (!mounted) return;
-    await _showPrompt(text, id);
-    _showing = false;
-  }
-
-  Future<void> _showPrompt(String rawText, String albumId) async {
     final accepted = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => _LinkPromptSheet(
-        rawText: rawText,
-        albumId: albumId,
+        rawText: text,
+        albumId: id,
       ),
     );
-    _handled.add(rawText);
-    await _saveHandled();
+    _showing = false;
     if (accepted == true && mounted) {
-      await _openAlbum(albumId);
+      await _openAlbum(id);
     }
   }
 

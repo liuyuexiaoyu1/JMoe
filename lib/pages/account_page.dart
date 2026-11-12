@@ -5,9 +5,9 @@ import '../core/app_state.dart';
 import '../core/jm_protocol.dart';
 import '../core/jm_service.dart';
 import '../core/l10n.dart';
-import 'change_password_page.dart';
 import 'login_page.dart';
 import 'my_comments_page.dart';
+import 'tasks_page.dart';
 import 'profile_edit_page.dart';
 
 class AccountPage extends StatefulWidget {
@@ -445,7 +445,7 @@ class _AccountPageState extends State<AccountPage> {
               child: Column(
                 children: [
                   ListTile(
-                    leading: const Icon(Icons.forum_outlined),
+                    leading: const Icon(Icons.mode_comment_outlined),
                     title: Text(L.t('myComments')),
                     trailing: const Icon(Icons.chevron_right, size: 18),
                     onTap: () => Navigator.of(context).push(
@@ -468,12 +468,12 @@ class _AccountPageState extends State<AccountPage> {
                     },
                   ),
                   ListTile(
-                    leading: const Icon(Icons.lock_outline_rounded),
-                    title: Text(L.t('changePassword')),
+                    leading: const Icon(Icons.task_alt_rounded),
+                    title: Text(L.t('tasks')),
                     trailing: const Icon(Icons.chevron_right, size: 18),
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => const ChangePasswordPage(),
+                        builder: (_) => const TasksPage(),
                       ),
                     ),
                   ),

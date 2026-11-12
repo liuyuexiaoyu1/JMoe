@@ -118,6 +118,8 @@ class AppState extends ChangeNotifier {
 
   bool volumeKeyPage = true;
 
+  bool disableZoom = false;
+
   String customBackground = '';
   bool showPageProgress = true;
   bool enableVolumeKeys = true;
@@ -188,6 +190,7 @@ class AppState extends ChangeNotifier {
     if (seed != null) seedColor = Color(seed);
     readerMode = p.getString('readerMode') ?? 'vertical';
     volumeKeyPage = p.getBool('volumeKeyPage') ?? true;
+    disableZoom = p.getBool('disableZoom') ?? false;
     customBackground = p.getString('customBackground') ?? '';
     cacheSkipDate = p.getString('cacheSkipDate') ?? '';
     _loadBookmarks(p);
@@ -270,6 +273,12 @@ class AppState extends ChangeNotifier {
     readerMode = mode;
     notifyListeners();
     await _prefs?.setString('readerMode', mode);
+  }
+
+  Future<void> setDisableZoom(bool v) async {
+    disableZoom = v;
+    notifyListeners();
+    await _prefs?.setBool('disableZoom', v);
   }
 
   Future<void> setVolumeKeyPage(bool v) async {

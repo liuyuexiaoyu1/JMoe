@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import '../core/models.dart';
-import 'unified_detail_page.dart';
 import 'package:flutter/services.dart';
 
 import 'unified_categories_page.dart';
@@ -10,7 +8,6 @@ import 'settings_page.dart';
 import 'reader_data_page.dart';
 import '../core/app_state.dart';
 import '../core/l10n.dart';
-import '../widgets/detail_route.dart';
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
@@ -82,7 +79,6 @@ class _MainPageState extends State<MainPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       UnifiedCategoriesPage.precacheNow();
       ReaderDataPage.precacheNow();
-      _checkClipboardShare();
     });
   }
 
@@ -93,45 +89,6 @@ class _MainPageState extends State<MainPage>
     super.dispose();
   }
 
-  Future<void> _checkClipboardShare() async {
-    try {
-      final data = await Clipboard.getData(Clipboard.kTextPlain);
-      final text = data?.text ?? '';
-      if (text.isEmpty || !text.contains('【JMoe】')) return;
-
-      String? comicId;
-      String? sourceId;
-      final jm = RegExp(r'JM(\d{3,})').firstMatch(text);
-      if (jm != null) {
-        comicId = jm.group(1);
-        sourceId = 'jm';
-      } else {
-        final eh = RegExp(r'(\d{4,})\s*$').firstMatch(text.trim());
-        if (eh != null) {
-          comicId = eh.group(1);
-          sourceId = 'ehentai';
-        }
-      }
-      if (comicId == null || !mounted) return;
-
-      final comic = Comic(
-        id: sourceId == 'ehentai'
-            ? 'eh:https://e-hentai.org/g/$comicId/'
-            : comicId,
-        name: '',
-        author: '',
-        source: sourceId!,
-      );
-      await Navigator.of(context).push(
-        detailRoute(builder: (_) => UnifiedDetailPage(
-            source: SourceRegistry.current,
-            comic: comic,
-          ),
-        ),
-      );
-    } catch (_) {
-    }
-  }
 
   Future<void> _onSelect(int i) async {
     if (i == _index || _animating) return;

@@ -96,6 +96,12 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
   }
 
   ReadBundle? _bundle;
+
+  ReadBundle? _nextBundle;
+  bool _loadingNext = false;
+  bool _seamlessOn = true;
+
+  bool _zooming = false;
   ChapterCacheTask? _task;
   bool _loading = true;
   String? _error;
@@ -248,6 +254,12 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
       _saveProgress(page);
       _task?.startPage = page - 1;
       _schedulePrefetch(page - 1, total);
+    }
+
+    final b = _bundle;
+    if (_seamlessOn && b != null && b.length > 0) {
+      final remain = b.length - page;
+      if (remain <= 3) unawaited(_ensureNextBundle());
     }
   }
 
@@ -523,6 +535,47 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
     }
   }
 
+  Future<void> _ensureNextBundle() async {
+    if (!_seamlessOn) return;
+    if (_loadingNext || _nextBundle != null) return;
+    if (_index >= widget.chapters.length - 1) return;
+    final ch = widget.chapters[_index + 1];
+    _loadingNext = true;
+    try {
+      final b = await widget.source.read(widget.comic, ch);
+      if (!mounted) return;
+      setState(() => _nextBundle = b);
+    } catch (_) {
+    } finally {
+      _loadingNext = false;
+    }
+  }
+
+  void _seamlessAdvance() {
+    if (!_seamlessOn) return;
+    final nb = _nextBundle;
+    if (nb == null) {
+      _goChapter(1);
+      return;
+    }
+    _releaseTemp();
+    setState(() {
+      _index = _index + 1;
+      _bundle = nb;
+      _nextBundle = null;
+      _task = null;
+      _ratios.clear();
+      _currentPage = 1;
+    });
+    if (_vertical) {
+      _scroll.jumpTo(0);
+    } else {
+      _pageController.jumpToPage(0);
+    }
+
+    unawaited(_ensureNextBundle());
+  }
+
   void _goChapter(int delta) {
     final target = _index + delta;
     if (target < 0 || target >= widget.chapters.length) return;
@@ -714,7 +767,9 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
     return ListView.builder(
       cacheExtent: 2000, controller: _scroll,
       itemCount: _localFiles.length,
-      physics: const ClampingScrollPhysics(),
+      physics: _zooming
+          ? const NeverScrollableScrollPhysics()
+          : const ClampingScrollPhysics(),
       itemBuilder: (context, i) => _buildLocalPage(i),
     );
   }
@@ -770,11 +825,17 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
                 MediaQuery.of(context).devicePixelRatio)
             .round();
     _lastDecodeWidth = decodeW;
-    return ListView.builder(
+    final hasTail = _seamlessOn && _hasNext;
+    final list = ListView.builder(
       cacheExtent: 2000, controller: _scroll,
-      itemCount: b.length,
-      physics: const ClampingScrollPhysics(),
+      itemCount: b.length + (hasTail ? 1 : 0),
+      physics: _zooming
+          ? const NeverScrollableScrollPhysics()
+          : const ClampingScrollPhysics(),
       itemBuilder: (context, i) {
+        if (i >= b.length) {
+          return _seamlessTail();
+        }
         return RepaintBoundary(
           child: ReaderPageView(
             key: ValueKey('${b.chapterId}_${i}_${b.pages[i].index}'),
@@ -791,10 +852,150 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
             tempDir: _tempDir,
             fallbackRatio: _ratioAt(i),
             onLoaded: (r) => _rememberRatio(i, r),
+            enableZoom: false,
           ),
         );
       },
     );
+
+    // 所有页视为一张超长图整体缩放，锚定手指焦点。
+    final viewport = MediaQuery.of(context).size;
+    return Listener(
+      onPointerDown: (e) => _zoomDown(e, viewport),
+      onPointerMove: _zoomMove,
+      onPointerUp: _zoomUp,
+      onPointerCancel: _zoomUp,
+      child: Transform(
+        alignment: Alignment.topLeft,
+        transform: Matrix4.identity()
+          ..translate(_zoomPan.dx, _zoomPan.dy)
+          ..scale(_zoomScale),
+        child: list,
+      ),
+    );
+  }
+
+  // ---- 整表双指缩放 ----
+  //
+  // 变换 = scale(s) 后 translate(pan)，原点在左上角：
+  // 内容点 c 映射到屏幕 s*c + pan。
+  // 要让焦点下的内容跟随手指：
+  //   pan1 = focal1 - (s1/s0) * (focal0 - pan0)
+  final Map<int, Offset> _zPtrs = {};
+  double _zoomScale = 1;
+  Offset _zoomPan = Offset.zero;
+  double _zoomStartDist = 0;
+  double _zoomStartScale = 1;
+  Offset _zoomStartPan = Offset.zero;
+  Offset _zoomStartFocal = Offset.zero;
+  Size _zoomViewport = Size.zero;
+
+  void _zoomDown(PointerDownEvent e, Size viewport) {
+    _zoomViewport = viewport;
+    _zPtrs[e.pointer] = e.position;
+    if (_zPtrs.length == 2) {
+      final pts = _zPtrs.values.toList();
+      _zoomStartDist = (pts[1] - pts[0]).distance;
+      _zoomStartScale = _zoomScale;
+      _zoomStartPan = _zoomPan;
+      _zoomStartFocal = (pts[0] + pts[1]) / 2;
+      if (!_zooming) setState(() => _zooming = true);
+    }
+  }
+
+  void _zoomMove(PointerMoveEvent e) {
+    if (!_zPtrs.containsKey(e.pointer)) return;
+    _zPtrs[e.pointer] = e.position;
+    if (_zPtrs.length < 2 || _zoomStartDist <= 0) return;
+
+    final pts = _zPtrs.values.toList();
+    final dist = (pts[1] - pts[0]).distance;
+    final focal1 = (pts[0] + pts[1]) / 2;
+
+    final raw = _zoomStartScale * (dist / _zoomStartDist);
+    final s1 = raw.clamp(1.0, 5.0);
+    final ratio = s1 / _zoomStartScale;
+
+    var px = focal1.dx - ratio * (_zoomStartFocal.dx - _zoomStartPan.dx);
+    var py = focal1.dy - ratio * (_zoomStartFocal.dy - _zoomStartPan.dy);
+
+    final w = _zoomViewport.width;
+    final h = _zoomViewport.height;
+    final maxDx = (w * (s1 - 1)).clamp(0.0, double.infinity);
+    final maxDy = (h * (s1 - 1)).clamp(0.0, double.infinity);
+    px = px.clamp(-maxDx, 0.0);
+    py = py.clamp(-maxDy, 0.0);
+
+    setState(() {
+      _zoomScale = s1;
+      _zoomPan = s1 <= 1.001 ? Offset.zero : Offset(px, py);
+    });
+  }
+
+  void _zoomUp(PointerEvent e) {
+    _zPtrs.remove(e.pointer);
+    if (_zPtrs.length < 2) _zoomStartDist = 0;
+    if (_zPtrs.isEmpty) {
+      if (_zoomScale <= 1.02) {
+        setState(() {
+          _zoomScale = 1;
+          _zoomPan = Offset.zero;
+          _zooming = false;
+        });
+      } else {
+        setState(() => _zooming = false);
+      }
+    }
+  }
+
+  Widget _seamlessTail() {
+    final h = MediaQuery.of(context).size.height * 0.32;
+    final ready = _nextBundle != null;
+    return SizedBox(
+      height: h,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!ready)
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white24,
+                ),
+              )
+            else
+              const Icon(
+                Icons.keyboard_arrow_down_rounded,
+                color: Colors.white38,
+                size: 26,
+              ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: ready ? _seamlessAdvance : null,
+              child: Text(
+                ready
+                    ? '\u4e0b\u4e00\u7ae0\uff1a${_nextChapterName()}'
+                    : L.t('loading'),
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _nextChapterName() {
+    final i = _index + 1;
+    if (i < 0 || i >= widget.chapters.length) return '';
+    final n = widget.chapters[i].name.trim();
+    return n.isEmpty ? '#${i + 1}' : n;
   }
 
   bool _restoredScroll = false;
@@ -844,6 +1045,9 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
               fit: BoxFit.contain,
               fallbackRatio: _ratioAt(i),
               onLoaded: (r) => _rememberRatio(i, r),
+              onZoomChanged: (z) {
+                if (_zooming != z) setState(() => _zooming = z);
+              },
             ),
           ),
         );
@@ -1167,7 +1371,14 @@ class _UnifiedReaderPageState extends State<UnifiedReaderPage> {
                   ),
                   Expanded(
                     child: TextButton.icon(
-                      onPressed: _hasNext ? () => _goChapter(1) : null,
+                      onPressed: _hasNext
+                        ? () => {
+                              if (_nextBundle != null)
+                                _seamlessAdvance()
+                              else
+                                _goChapter(1),
+                            }
+                        : null,
                       icon: Icon(
                         Icons.skip_next,
                         size: 18,

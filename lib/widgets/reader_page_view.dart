@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import '../core/app_state.dart';
 import '../core/image_cache.dart';
 import '../core/jm_protocol.dart';
 import '../core/reading_stats.dart';
@@ -20,6 +21,11 @@ class ReaderPageView extends StatefulWidget {
   final ComicSource source;
   final String cacheKey;
   final BoxFit fit;
+
+  final bool enableZoom;
+
+  /// 缩放状态变化时回调，供外层禁用列表滚动
+  final ValueChanged<bool>? onZoomChanged;
 
   final double fallbackRatio;
 
@@ -42,6 +48,8 @@ class ReaderPageView extends StatefulWidget {
     this.chapterId = '',
     this.tempDir,
     this.fit = BoxFit.fitWidth,
+    this.enableZoom = true,
+    this.onZoomChanged,
     this.fallbackRatio = 0.72,
     this.decodeWidth,
     this.onLoaded,
@@ -55,6 +63,9 @@ class _ReaderPageViewState extends State<ReaderPageView> {
   ui.Image? _image;
   bool _failed = false;
   bool _started = false;
+
+  bool get _zoomEnabled =>
+      widget.enableZoom && !AppState.instance.disableZoom;
 
   @override
   void initState() {
@@ -316,13 +327,116 @@ class _ReaderPageViewState extends State<ReaderPageView> {
     }
     final ratio = img.width / img.height <= 0 ? 0.72 : img.width / img.height;
     widget.onLoaded?.call(ratio);
+
+    final pic = RawImage(
+      image: img,
+      fit: widget.fit,
+      filterQuality: FilterQuality.low,
+    );
+
+    if (!_zoomEnabled) {
+      return AspectRatio(aspectRatio: ratio, child: pic);
+    }
+
+    // 纯双指缩放：Listener 自己跟踪多指，不参与手势竞技，
+    // 因此不会和列表滚动/点击互相抢夺。
     return AspectRatio(
       aspectRatio: ratio,
-      child: RawImage(
-        image: img,
-        fit: widget.fit,
-        filterQuality: FilterQuality.low,
+      child: Listener(
+        onPointerDown: _onDown,
+        onPointerMove: _onMove,
+        onPointerUp: _onUp,
+        onPointerCancel: _onUp,
+        child: Transform(
+          transform: _matrix,
+          alignment: Alignment.center,
+          child: pic,
+        ),
       ),
     );
   }
+
+  // ---- 双指缩放实现 ----
+  final _ptrs = <int, Offset>{};
+  var _matrix = Matrix4.identity();
+  double _startScale = 1;
+  Offset _startFocal = Offset.zero;
+  double _dx = 0;
+  double _dy = 0;
+  bool _zoomNotified = false;
+
+  void _onDown(PointerDownEvent e) {
+    _ptrs[e.pointer] = e.localPosition;
+    if (_ptrs.length == 2) {
+      final pts = _ptrs.values.toList();
+      _startFocal = (pts[0] + pts[1]) / 2;
+      _startScale = 1;
+    }
+  }
+
+  void _onMove(PointerMoveEvent e) {
+    if (!_ptrs.containsKey(e.pointer)) return;
+    _ptrs[e.pointer] = e.localPosition;
+    if (_ptrs.length < 2) return;
+
+    final pts = _ptrs.values.toList();
+    final p0 = pts[0];
+    final p1 = pts[1];
+    final dist = (p1 - p0).distance;
+    final focal = (p0 + p1) / 2;
+
+    // 用初始距离作为基准
+    final span = _spanFor();
+    final scale = (dist / span).clamp(1.0, 5.0);
+    final pan = focal - _startFocal;
+
+    _dx = pan.dx;
+    _dy = pan.dy;
+    _startScale = scale;
+
+    _matrix = Matrix4.identity()
+      ..translate(_dx, _dy)
+      ..scale(scale);
+
+    if (!_zoomNotified) {
+      _zoomNotified = true;
+      widget.onZoomChanged?.call(true);
+    }
+    setState(() {});
+  }
+
+  double _spanFor() {
+    // 记录首次两指按下时的间距
+    if (_initialSpan <= 0) {
+      final pts = _ptrs.values.toList();
+      if (pts.length >= 2) {
+        _initialSpan = (pts[1] - pts[0]).distance;
+      }
+    }
+    return _initialSpan <= 0 ? 1 : _initialSpan;
+  }
+
+  double _initialSpan = 0;
+
+  void _onUp(PointerEvent e) {
+    _ptrs.remove(e.pointer);
+    if (_ptrs.length < 2) {
+      _initialSpan = 0;
+    }
+    if (_ptrs.isEmpty) {
+      // 回弹：缩放小于 1.02 时归位
+      if (_startScale <= 1.02) {
+        _matrix = Matrix4.identity();
+        _startScale = 1;
+        _dx = 0;
+        _dy = 0;
+        if (_zoomNotified) {
+          _zoomNotified = false;
+          widget.onZoomChanged?.call(false);
+        }
+        setState(() {});
+      }
+    }
+  }
+
 }

@@ -4,7 +4,7 @@ repository: https://github.com/liuyuexiaoyu1/jmoe
 homepage: https://github.com/liuyuexiaoyu1
 license: MIT
 publish_to: 'none'
-version: 1.5.0+4
+version: 1.6.0+5
 
 environment:
   sdk: '>=3.13.5 <4.0.0'

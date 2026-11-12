@@ -617,7 +617,9 @@ class _CachedCoverState extends State<CachedCover> {
       _bytes = sync;
       return;
     }
-    ImageCacheManager.instance.load(url, fetcher: _fetch).then((b) {
+    ImageCacheManager.instance
+        .load(url, fetcher: _fetch, persist: true)
+        .then((b) {
       if (!mounted) return;
       if (b == null) {
         unawaited(AppLog.instance.log('IMG', 'cover fetch failed: $url'));
@@ -631,15 +633,17 @@ class _CachedCoverState extends State<CachedCover> {
 
   static Future<Uint8List?> _fetch(String url) async {
     final b = await JmApi.instance.fetchBytes(url);
-    if (b != null) return b;
+    if (b != null && b.isNotEmpty) return b;
     for (final alt in JmService.instance.imageUrlCandidates(url)) {
       final r = await JmApi.instance.fetchBytes(alt);
-      if (r != null) {
-        print('[JMOE] cover mirror ok: $alt');
+      if (r != null && r.isNotEmpty) {
+        unawaited(
+          ImageCacheManager.instance.persistBytes(url, r),
+        );
         return r;
       }
     }
-    print('[JMOE] cover fetch FAILED (all mirrors): $url');
+    unawaited(AppLog.instance.log('IMG', 'all mirrors failed: $url'));
     return null;
   }
 

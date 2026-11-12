@@ -108,17 +108,23 @@ class _UnifiedDetailPageState extends State<UnifiedDetailPage> {
 
   bool _heroFlying = false;
 
+  /// 订阅 = 追更：同时写本地（供后台检查）与官方 album_tracking（云端）。
   Future<void> _toggleSubscribe() async {
     HapticFeedback.lightImpact();
     final id = widget.comic.id;
+    final chapters = _info?.chapters ?? const <Chapter>[];
+
     if (_subscribed) {
       await SubscriptionStore.instance.unsubscribe(id);
+      if (widget.source.id == 'jm' && AppState.instance.loggedIn) {
+        unawaited(JmService.instance.toggleTracking(id));
+      }
       if (!mounted) return;
       setState(() => _subscribed = false);
       _toast(L.t('unsubscribed'), icon: Icons.notifications_off_outlined);
       return;
     }
-    final chapters = _info?.chapters ?? const <Chapter>[];
+
     await SubscriptionStore.instance.subscribe(
       Subscription(
         comicId: id,
@@ -130,6 +136,9 @@ class _UnifiedDetailPageState extends State<UnifiedDetailPage> {
         createdAt: DateTime.now().millisecondsSinceEpoch,
       ),
     );
+    if (widget.source.id == 'jm' && AppState.instance.loggedIn) {
+      unawaited(JmService.instance.toggleTracking(id));
+    }
     if (!mounted) return;
     setState(() => _subscribed = true);
     _toast(L.t('subscribed'), icon: Icons.notifications_active_rounded);
@@ -469,10 +478,15 @@ class _UnifiedDetailPageState extends State<UnifiedDetailPage> {
   Widget _buildHeader(ThemeData theme) {
     return SliverAppBar(
       expandedHeight: 300,
+      collapsedHeight: kToolbarHeight + MediaQuery.of(context).padding.top,
+      toolbarHeight: kToolbarHeight,
       pinned: true,
       stretch: true,
-      backgroundColor: theme.colorScheme.surface,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      backgroundColor: Colors.transparent,
       surfaceTintColor: Colors.transparent,
+      forceMaterialTransparency: true,
       leading: _RoundBtn(
         icon: Icons.arrow_back,
         onTap: () => Navigator.of(context).pop(),
@@ -505,20 +519,6 @@ class _UnifiedDetailPageState extends State<UnifiedDetailPage> {
             BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
               child: Container(color: Colors.black26),
-            ),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.transparent,
-                    Colors.black.withValues(alpha: 0.55),
-                    theme.colorScheme.surface,
-                  ],
-                  stops: const [0.35, 0.82, 1],
-                ),
-              ),
             ),
             Positioned(
               left: 16,

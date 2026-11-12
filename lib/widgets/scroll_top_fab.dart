@@ -26,34 +26,19 @@ class ScrollTopFab extends StatelessWidget {
     final button = _isAction ? _buildAction(scheme) : _buildTop(scheme);
 
     final hasHero = heroTag != null && heroTag!.isNotEmpty;
-    if (hasHero) {
-      return Hero(
-        tag: heroTag!,
-        child: _show || _isAction ? button : _buildTop(scheme),
-      );
+
+    // 不可见时不渲染任何东西：没有残留动画，也不占位播放。
+    if (!_show) {
+      return const SizedBox(width: 56, height: 56);
     }
 
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: _show ? 1.0 : 0.0),
-      duration: const Duration(milliseconds: 240),
-      curve: Curves.easeOutCubic,
-      builder: (context, t, child) {
-        if (t <= 0.001) {
-          return const SizedBox(width: 56, height: 56);
-        }
-        return SizedBox(
-          width: 56,
-          height: 56,
-          child: Opacity(
-            opacity: t,
-            child: Transform.scale(
-              scale: 0.85 + 0.15 * t,
-              child: child,
-            ),
-          ),
-        );
-      },
-      child: IgnorePointer(ignoring: !_show, child: button),
+    final content = SizedBox(width: 56, height: 56, child: button);
+
+    if (!hasHero) return content;
+
+    return Hero(
+      tag: heroTag!,
+      child: content,
     );
   }
 

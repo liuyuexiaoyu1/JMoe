@@ -18,6 +18,8 @@ import '../core/host_store.dart';
 import 'about_page.dart';
 import 'imported_page.dart';
 import 'storage_page.dart';
+import 'tag_block_page.dart';
+import 'webdav_page.dart';
 import '../core/l10n.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -61,6 +63,7 @@ class _SettingsPageState extends State<SettingsPage>
             _buildBackgroundTile(theme, state),
             SectionHeader(title: L.t('reading')),
             _buildReaderModeTile(theme, state),
+            _buildZoomTile(theme, state),
             if (PlatformCaps.supportsVolumeKeyPaging)
               _buildVolumeKeyTile(theme, state),
             _buildStartTabTile(theme, state),
@@ -71,12 +74,14 @@ class _SettingsPageState extends State<SettingsPage>
             SectionHeader(title: L.t('behavior')),
             _buildAutoEnterTile(theme, state),
             _buildConfirmDeleteTile(theme, state),
+            _buildTagBlockEntry(theme),
             SectionHeader(title: L.t('network')),
             _buildNetLimitTile(theme, state),
             _buildHostTile(theme, state),
             _buildSkipStartupTile(theme, state),
             _buildLanguageEntry(theme, state),
                         _buildStorageEntry(theme, state),
+            _buildWebDavEntry(theme),
             SectionHeader(title: L.t('about')),
             ListTile(
               leading: const Icon(Icons.settings_applications_outlined),
@@ -560,6 +565,47 @@ class _SettingsPageState extends State<SettingsPage>
       onTap: () async {
         await Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const LanguagePage()),
+        );
+        if (mounted) setState(() {});
+      },
+    );
+  }
+
+  Widget _buildWebDavEntry(ThemeData theme) {
+    return ListTile(
+      leading: const Icon(Icons.cloud_sync_outlined),
+      title: Text(L.t('webdav')),
+      subtitle: Text(L.t('backupRestore')),
+      trailing: const Icon(Icons.chevron_right, size: 18),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const WebDavPage()),
+      ),
+    );
+  }
+
+  Widget _buildZoomTile(ThemeData theme, AppState state) {
+    return SwitchListTile(
+      secondary: const Icon(Icons.zoom_in_map_rounded),
+      title: Text(L.t('imageZoom')),
+      subtitle: Text(L.t('imageZoomDesc')),
+      value: !state.disableZoom,
+      onChanged: (v) async {
+        await state.setDisableZoom(!v);
+        if (mounted) setState(() {});
+      },
+    );
+  }
+
+
+  Widget _buildTagBlockEntry(ThemeData theme) {
+    return ListTile(
+      leading: const Icon(Icons.block_rounded),
+      title: Text(L.t('tagBlock')),
+      subtitle: Text(L.t('tagBlockHint')),
+      trailing: const Icon(Icons.chevron_right, size: 18),
+      onTap: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const TagBlockPage()),
         );
         if (mounted) setState(() {});
       },

@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import '../core/app_log.dart';
 import '../core/app_state.dart';
 import '../core/jm_protocol.dart';
+import '../core/favorite_models.dart';
 import '../core/models.dart';
 
 class JmService {
@@ -328,12 +329,21 @@ class JmService {
     String folderId = '0',
     String order = 'mr',
   }) async {
+    final p = await fetchFavoritePage(
+      page: page,
+      folderId: folderId,
+      order: order,
+    );
+    return (p.comics.cast<Comic>(), p.total);
+  }
+
+  Future<FavoritePage> fetchFavoritePage({
+    int page = 1,
+    String folderId = '0',
+    String order = 'mr',
+  }) async {
     lastFavoritesOk = false;
     lastFavoritesAuthFailed = false;
-    print('[JMOE] fetchFavorites page=$page '
-        'jwt=${(JmApi.instance.jwtToken ?? '').isEmpty ? "MISSING" : "ok"} '
-        'cookie=${(JmApi.instance.cookieValue ?? '').isEmpty ? "none" : "ok"} '
-        'loggedIn=${AppState.instance.loggedIn}');
     final r = await _api.get('favorite', {
       'page': page,
       'folder_id': folderId,
@@ -341,25 +351,230 @@ class JmService {
     });
     final code = r['code'];
     if (code != 200) {
-      print('[JMOE] fetchFavorites failed: code=$code msg=${r['errorMsg']}');
       unawaited(AppLog.instance.log(
         'FAV',
         'fetchFavorites failed code=$code msg=${r['errorMsg']}',
       ));
       lastFavoritesOk = false;
       lastFavoritesAuthFailed = code == 401;
-      return (const <Comic>[], 0);
+      return FavoritePage.empty;
     }
     final data = r['data'];
     if (data is Map) {
-      final total = int.tryParse('${data['total'] ?? 0}') ?? 0;
       lastFavoritesOk = true;
+      final total = int.tryParse('${data['total'] ?? 0}') ?? 0;
+      final count = int.tryParse('${data['count'] ?? 0}') ?? 0;
+      final folders = <FavoriteFolder>[];
+      final raw = data['folder_list'] ?? data['folderList'];
+      if (raw is List) {
+        for (final f in raw) {
+          if (f is Map) {
+            folders.add(
+              FavoriteFolder.fromJm(Map<String, dynamic>.from(f)),
+            );
+          }
+        }
+      }
+      return FavoritePage(
+        comics: _comicList(data['list'] ?? data['content']),
+        total: total,
+        count: count,
+        folders: folders,
+      );
+    }
+    lastFavoritesOk = false;
+    return FavoritePage.empty;
+  }
+
+  Future<Map<String, dynamic>> editFavoriteFolder({
+    required String action,
+    String? name,
+    String? folderId,
+  }) async {
+    return _api.post('favorite_folder', {
+      'action': action,
+      if (name != null && name.isNotEmpty) 'name': name,
+      if (folderId != null && folderId.isNotEmpty) 'folder_id': folderId,
+    });
+  }
+
+  Future<List<TagsFavoriteItem>> fetchTagsFavorite() async {
+    final r = await _api.get('tags_favorite', {});
+    final data = r['data'];
+    final out = <TagsFavoriteItem>[];
+    if (data is Map) {
+      final list = data['list'] ?? data['content'] ?? data['tags'];
+      if (list is List) {
+        for (final t in list) {
+          if (t is Map) {
+            out.add(TagsFavoriteItem.fromJm(Map<String, dynamic>.from(t)));
+          }
+        }
+      }
+    } else if (data is List) {
+      for (final t in data) {
+        if (t is Map) {
+          out.add(TagsFavoriteItem.fromJm(Map<String, dynamic>.from(t)));
+        }
+      }
+    }
+    return out;
+  }
+
+  Future<bool> updateTagsFavorite({
+    required String tag,
+    required bool add,
+  }) async {
+    final r = await _api.post('tags_favorite_update', {
+      'tag': tag,
+      'action': add ? 'add' : 'del',
+    });
+    return r['code'] == 200;
+  }
+
+  Future<(List<TrackedComic>, int)> fetchTrackedList({int page = 1}) async {
+    final r = await _api.post('album_tracking', {'page': page});
+    final data = r['data'];
+    final out = <TrackedComic>[];
+    var total = 0;
+    if (data is Map) {
+      total = int.tryParse('${data['total'] ?? 0}') ?? 0;
+      final list = data['list'] ?? data['content'];
+      if (list is List) {
+        for (final c in list) {
+          if (c is Map) {
+            out.add(TrackedComic.fromJm(Map<String, dynamic>.from(c)));
+          }
+        }
+      }
+    }
+    return (out, total);
+  }
+
+  Future<(List<Comic>, int)> fetchDailyList({
+    int page = 1,
+    Map<String, String> filters = const {},
+  }) async {
+    final r = await _api.get('daily_list', {
+      'page': page,
+      ...filters,
+    });
+    final data = r['data'];
+    if (data is Map) {
+      final total = int.tryParse('${data['total'] ?? 0}') ?? 0;
       return (_comicList(data['list'] ?? data['content']), total);
     }
-    print('[JMOE] fetchFavorites bad data: ${data.runtimeType}');
-    lastFavoritesOk = false;
     return (const <Comic>[], 0);
   }
+
+  Future<List<DailyFilterOption>> fetchDailyOptions() async {
+    final r = await _api.get('daily_list/filter', {});
+    final data = r['data'];
+    final out = <DailyFilterOption>[];
+    if (data is Map) {
+      final list = data['list'] ?? data['filters'] ?? data['options'];
+      if (list is List) {
+        for (final f in list) {
+          if (f is Map) {
+            out.add(DailyFilterOption.fromJm(Map<String, dynamic>.from(f)));
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  Future<(List<CreatorWork>, int)> fetchCreatorWork({
+    required String author,
+    int page = 1,
+  }) async {
+    final r = await _api.get('search', {
+      'search_query': author,
+      'search_type': 'author',
+      'page': page,
+    });
+    final data = r['data'];
+    final out = <CreatorWork>[];
+    var total = 0;
+    if (data is Map) {
+      total = int.tryParse('${data['total'] ?? 0}') ?? 0;
+      final list = data['content'] ?? data['list'];
+      if (list is List) {
+        for (final c in list) {
+          if (c is Map) {
+            out.add(CreatorWork.fromJm(Map<String, dynamic>.from(c)));
+          }
+        }
+      }
+    } else if (data is List) {
+      for (final c in data) {
+        if (c is Map) {
+          out.add(CreatorWork.fromJm(Map<String, dynamic>.from(c)));
+        }
+      }
+      total = out.length;
+    }
+    return (out, total);
+  }
+
+  Future<List<TaskItem>> fetchTasks(String type) async {
+    final r = await _api.get('tasks', {'type': type});
+    final data = r['data'];
+    final out = <TaskItem>[];
+    var list;
+    if (data is Map) {
+      list = data['list'];
+    } else if (data is List) {
+      list = data;
+    }
+    if (list is List) {
+      for (final t in list) {
+        if (t is Map) {
+          out.add(TaskItem.fromJm(Map<String, dynamic>.from(t), type));
+        }
+      }
+    }
+    return out;
+  }
+
+  Future<bool> toggleTracking(String id) async {
+    final r = await toggleSerialTracking(id);
+    return r['code'] == 200;
+  }
+
+  Future<bool> submitReport({
+    required String type,
+    required String message,
+    String? contact,
+    String? targetId,
+  }) async {
+    final r = await _api.post('support_report', {
+      'type': type,
+      'message': message,
+      if (contact != null && contact.isNotEmpty) 'contact': contact,
+      if (targetId != null && targetId.isNotEmpty) 'aid': targetId,
+    });
+    return r['code'] == 200;
+  }
+
+  Future<bool> buyComicWithCoin(String aid) async {
+    final r = await _api.post('coin_buy_comics', {'id': aid});
+    return r['code'] == 200;
+  }
+
+  Future<bool> buyNovelWithCoin(String nid) async {
+    final r = await _api.post('novel_coin_buy', {'id': nid});
+    return r['code'] == 200;
+  }
+
+  Future<bool> setTagBlock(String tag, bool block) async {
+    final r = await _api.post('tag_block', {
+      'tag': tag,
+      'action': block ? 'add' : 'del',
+    });
+    return r['code'] == 200;
+  }
+
 
   Future<Map<String, dynamic>> toggleFavorite(String aid) async =>
       _api.post('favorite', {'aid': aid});

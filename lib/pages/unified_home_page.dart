@@ -13,6 +13,8 @@ import '../core/source.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/scroll_top_fab.dart';
 import 'anime_page.dart';
+import 'daily_updates_page.dart';
+import 'ranking_page.dart';
 import 'history_page.dart';
 import 'novels_page.dart';
 import 'more_list_page.dart';
@@ -202,7 +204,11 @@ class UnifiedHomePageState extends State<UnifiedHomePage>
   }
 
   Future<void> _openComic(Comic c, {String? coverTag}) async {
-    _pendingFabTag = 'fab_${_source.id}_${c.id}';
+    // 只有 FAB 当前确实可见时才让详情页的按钮接住 Hero；
+    // 否则详情页会凭空出现一个"飞入"动画。
+    _pendingFabTag = _scrollOffset > 120
+        ? 'fab_${_source.id}_${c.id}'
+        : null;
     _pendingCoverTag = coverTag ?? 'cover_${_source.id}_${c.id}';
     setState(() {});
     await WidgetsBinding.instance.endOfFrame;
@@ -355,55 +361,70 @@ class UnifiedHomePageState extends State<UnifiedHomePage>
 
   Widget _buildQuickEntries() {
     final items = <(Widget Function(Color), String, Widget)>[
-      ((c) => AppIcons.anime(size: 21, color: c), L.t('anime'), const AnimePage()),
-      ((c) => AppIcons.novel(size: 21, color: c), L.t('novels'), const NovelsPage()),
-      ((c) => Icon(Icons.auto_awesome_rounded, size: 20, color: c),
-          L.t('weeklyMustSee'), const WeekPage()),      ((c) => Icon(Icons.history_rounded, size: 20, color: c),
+      ((c) => AppIcons.anime(size: 21, color: c), L.t('anime'),
+          const AnimePage()),
+      ((c) => AppIcons.novel(size: 21, color: c), L.t('novels'),
+          const NovelsPage()),
+      ((c) => Icon(Icons.auto_awesome_rounded, size: 21, color: c),
+          L.t('weeklyMustSee'), const WeekPage()),
+      ((c) => Icon(Icons.today_rounded, size: 21, color: c),
+          L.t('dailyUpdates'), const DailyUpdatesPage()),
+      ((c) => Icon(Icons.emoji_events_rounded, size: 21, color: c),
+          L.t('ranking'), const RankingPage()),
+      ((c) => Icon(Icons.history_rounded, size: 21, color: c),
           L.t('history'), const HistoryPage()),
     ];
+    final scheme = Theme.of(context).colorScheme;
     return SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 2),
-        child: Row(
-          children: items.map((e) {
-            final scheme = Theme.of(context).colorScheme;
-            return Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(12),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => e.$3),
-                  ),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 13),
-                    decoration: BoxDecoration(
-                      color: scheme.surfaceContainerLow,
+        child: LayoutBuilder(
+          builder: (ctx, box) {
+            const gap = 8.0;
+            final w = (box.maxWidth - gap * 2) / 3;
+            return Wrap(
+              spacing: gap,
+              runSpacing: gap,
+              children: [
+                for (final e in items)
+                  SizedBox(
+                    width: w,
+                    child: InkWell(
                       borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      children: [
-                        e.$1(scheme.primary),
-                        const SizedBox(height: 5),
-                        Text(
-                          e.$2,
-                          style: const TextStyle(
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w600,
-                          ),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => e.$3),
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        decoration: BoxDecoration(
+                          color: scheme.surfaceContainerLow,
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                      ],
+                        child: Column(
+                          children: [
+                            e.$1(scheme.primary),
+                            const SizedBox(height: 5),
+                            Text(
+                              e.$2,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                ),
-              ),
+              ],
             );
-          }).toList(),
+          },
         ),
       ),
     );
   }
-
   void _startBannerTimer() {
     _bannerTimer?.cancel();
     if (!AppState.instance.bannerAutoPlay) return;
@@ -701,8 +722,8 @@ class _HeroCard extends StatelessWidget {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Colors.transparent, Colors.black87],
-                stops: [0.4, 1.0],
+                colors: [Colors.transparent, Colors.black54],
+                stops: [0.55, 1.0],
               ),
             ),
           ),

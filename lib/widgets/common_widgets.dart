@@ -5,6 +5,7 @@ import '../core/app_theme.dart';
 import '../core/image_cache.dart';
 import '../core/l10n.dart';
 import '../core/models.dart';
+import '../core/tag_block_store.dart';
 
 class CoverImage extends StatelessWidget {
   final String? url;
@@ -50,6 +51,9 @@ class ComicCard extends StatelessWidget {
 
   final String? heroTag;
 
+  /// 飞向的目标页面封面圆角（详情页头部为 0）
+  final double heroEndRadius;
+
   final String? coverMeta;
 
   final bool localTag;
@@ -71,6 +75,7 @@ class ComicCard extends StatelessWidget {
     this.heat,
     this.category,
     this.heroTag,
+    this.heroEndRadius = 0,
     this.coverMeta,
     this.localTag = false,
     this.cloudTag = false,
@@ -105,9 +110,16 @@ class ComicCard extends StatelessWidget {
     return Hero(
       tag: heroTag!,
       flightShuttleBuilder: (context, animation, direction, fromCtx, toCtx) {
+        final t = Curves.easeInOutCubic.transform(animation.value);
+        final a = direction == HeroFlightDirection.push ? t : 1 - t;
+        final r = AppStyle.cardRadius +
+            (heroEndRadius - AppStyle.cardRadius) * a;
         return ClipRRect(
-          borderRadius: BorderRadius.circular(AppStyle.cardRadius),
-          child: CoverImage(url: cover),
+          borderRadius: BorderRadius.circular(r),
+          child: CoverImage(
+            url: cover,
+            memCacheWidth: memCacheWidth,
+          ),
         );
       },
       placeholderBuilder: (context, size, widget) => SizedBox(
@@ -521,6 +533,10 @@ class ComicGrid extends StatelessWidget {
 
     final cols = crossAxisCount ?? densityCols;
 
+    final shown = TagBlockStore.instance.isEmpty
+        ? items
+        : items.where((c) => !c.isBlocked).toList();
+
     return GridView.builder(
       cacheExtent: 1200, padding: padding,
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -529,10 +545,10 @@ class ComicGrid extends StatelessWidget {
         crossAxisSpacing: hGap,
         childAspectRatio: ratio,
       ),
-      itemCount: items.length + n,
+      itemCount: shown.length + n,
       itemBuilder: (context, i) {
-        if (i >= items.length) return const ShimmerBox();
-        final c = items[i];
+        if (i >= shown.length) return const ShimmerBox();
+        final c = shown[i];
         return ComicCard(
           title: c.name,
           subtitle: c.author,

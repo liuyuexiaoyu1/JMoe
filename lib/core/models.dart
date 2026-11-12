@@ -1,5 +1,7 @@
 library;
 
+import 'tag_block_store.dart';
+
 String cleanAuthor(String raw) {
   var s = raw.trim();
   while (s.length >= 2 && s.startsWith('[') && s.endsWith(']')) {
@@ -24,15 +26,20 @@ String cleanAuthor(String raw) {
 List<String> splitAuthors(String raw) {
   final base = cleanAuthor(raw);
   if (base.isEmpty) return const [];
-  final parts = base.split(RegExp(r'\s*[,，、;/｜|]\s*'));
+
+  // JM 官方多个作者之间只用半角逗号分隔。
+  // 空格是名字的一部分（如 "AstroCall Hung 연승엄미"），
+  // 中文顿号、斜杠、& 都可能是名字本身，不能当分隔符。
+  if (!base.contains(',')) return [base];
+
   final out = <String>[];
-  for (final p in parts) {
+  for (final p in base.split(',')) {
     final t = cleanAuthor(p);
     if (t.isEmpty) continue;
     if (out.contains(t)) continue;
     out.add(t);
   }
-  return out;
+  return out.isEmpty ? [base] : out;
 }
 
 class Comic {
@@ -51,6 +58,17 @@ class Comic {
   final int? heat;
 
   List<String> get authorList => splitAuthors(author);
+
+  /// 是否命中用户设置的屏蔽标签（分类名也算标签）
+  bool get isBlocked {
+    final store = TagBlockStore.instance;
+    if (store.isEmpty) return false;
+    final list = <String>[
+      if (category != null && category!.isNotEmpty) category!,
+      if (categorySub != null && categorySub!.isNotEmpty) categorySub!,
+    ];
+    return store.blockedAny(list);
+  }
 
   const Comic({
     required this.id,

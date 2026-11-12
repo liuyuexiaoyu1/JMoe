@@ -21,6 +21,9 @@ import 'login_page.dart';
 import 'downloads_hub_page.dart';
 import 'bookmarks_page.dart';
 import 'collect_page.dart';
+import 'favorite_folder_page.dart';
+import 'tags_favorite_page.dart';
+import 'tracked_list_page.dart';
 import 'imported_page.dart';
 import 'unified_home_page.dart';
 import '../core/l10n.dart';
@@ -776,6 +779,22 @@ class _LibraryPageState extends State<LibraryPage>
                         ],
                       ),
                       IconButton(
+                        tooltip: L.t('favoriteFolders'),
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(
+                          Icons.folder_copy_outlined,
+                          size: 18,
+                        ),
+                        onPressed: () async {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const FavoriteFolderPage(),
+                            ),
+                          );
+                          if (mounted) await _pullRefresh();
+                        },
+                      ),
+                      IconButton(
                         tooltip: L.t('importFavorites'),
                         visualDensity: VisualDensity.compact,
                         icon: const Icon(Icons.file_download_outlined, size: 18),
@@ -860,10 +879,13 @@ class _LibraryPageState extends State<LibraryPage>
                                     final isLocalOnly = state.loggedIn &&
                                         (!_cloudKnown ||
                                             !_inCloud(id));
+                                    final heroTag =
+                                        'cover_${c.source}_${c.id}';
                                     final card = ComicCard(
                                       title: c.name,
                                       subtitle: c.author,
                                       cover: _service.coverUrl(c),
+                                      heroTag: heroTag,
                                       kindTag: _kindOf(id),
                                       cloudTag: isCloud,
                                       localTag: isLocalOnly,
@@ -878,7 +900,7 @@ class _LibraryPageState extends State<LibraryPage>
                                           });
                                           return;
                                         }
-                                        _openFavorite(c);
+                                        _openFavorite(c, coverTag: heroTag);
                                       },
                                       onLongPress: () {
                                         setState(() {
@@ -1022,33 +1044,66 @@ class _LibraryPageState extends State<LibraryPage>
           MaterialPageRoute(builder: (_) => const CollectPage()),
         ),
       ),
+      _Entry(
+        icon: Icons.folder_copy_outlined,
+        label: L.t('favoriteFolders'),
+        color: const Color(0xFF7E57C2),
+        onTap: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const FavoriteFolderPage()),
+          );
+          if (mounted) await _pullRefresh();
+        },
+      ),
+      _Entry(
+        icon: Icons.sell_outlined,
+        label: L.t('tagsFavorite'),
+        color: const Color(0xFF42A5F5),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const TagsFavoritePage()),
+        ),
+      ),
+      _Entry(
+        icon: Icons.notifications_active_outlined,
+        label: L.t('trackedWorks'),
+        color: const Color(0xFFFFA726),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const TrackedListPage()),
+        ),
+      ),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-      child: Row(
-        children: entries
-            .map(
-              (e) => Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: LayoutBuilder(
+        builder: (ctx, box) {
+          final w = (box.maxWidth - 16) / 3;
+          return Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final e in entries)
+                SizedBox(
+                  width: w,
                   child: InkWell(
                     onTap: e.onTap,
                     borderRadius: BorderRadius.circular(14),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
                       decoration: BoxDecoration(
                         color: e.color.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Column(
                         children: [
-                          Icon(e.icon, color: e.color, size: 22),
-                          const SizedBox(height: 6),
+                          Icon(e.icon, color: e.color, size: 21),
+                          const SizedBox(height: 5),
                           Text(
                             e.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 11,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w500,
                               color: e.color,
                             ),
                           ),
@@ -1057,14 +1112,14 @@ class _LibraryPageState extends State<LibraryPage>
                     ),
                   ),
                 ),
-              ),
-            )
-            .toList(),
+            ],
+          );
+        },
       ),
     );
   }
 
-  void _openFavorite(Comic c) {
+  void _openFavorite(Comic c, {String? coverTag}) {
     final fav = AppState.instance.localFavorites
         .where((f) => '${f['id']}' == c.id)
         .toList();
@@ -1097,6 +1152,7 @@ class _LibraryPageState extends State<LibraryPage>
             builder: (_) => UnifiedDetailPage(
               source: SourceRegistry.current,
               comic: c,
+              coverTag: coverTag,
             ),
           ),
         );

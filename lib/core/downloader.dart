@@ -371,6 +371,7 @@ class ChapterDownloader {
         if (task.failed > 0) {
           task.error = '${task.failed} pages failed';
         }
+        task.completed = task.total;
         task.done = task.failed == 0;
         if (task.done) task.finishedAt = DateTime.now().millisecondsSinceEpoch;
         task.savedPath = dir.path;

@@ -49,8 +49,22 @@ class DownloadsPageState extends State<DownloadsPage> {
   @override
   void initState() {
     super.initState();
-    _ticker = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (mounted && _hasActiveTask()) _tick.value++;
+    var wasActive = false;
+    var tailTicks = 0;
+    _ticker = Timer.periodic(const Duration(milliseconds: 400), (_) {
+      if (!mounted) return;
+      final active = _hasActiveTask();
+      if (active) {
+        wasActive = true;
+        tailTicks = 8;
+        _tick.value++;
+        return;
+      }
+      if (wasActive && tailTicks > 0) {
+        tailTicks--;
+        _tick.value++;
+        if (tailTicks == 0) wasActive = false;
+      }
     });
   }
 
